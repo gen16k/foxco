@@ -51,12 +51,21 @@ func New(d *dlp.Detector, f *anthropic.Forwarder, audit storage.Recorder, log *s
 	}
 }
 
+// classifierWarmingMessage is shown when the request is fail-closed because the
+// LFM classifier is unavailable/warming (vs. an actual sensitive-content block),
+// so a transient startup state is not mistaken for a content block.
+const classifierWarmingMessage = "⏳ DLP分類器が起動中です（モデルのウォームアップ中、または分類器が応答しません）。数秒待ってから再実行してください。"
+
 // Register wires the handler onto the standard /v1/messages and count_tokens
-// routes. count_tokens is treated as a second egress channel and goes through
-// the same DLP path.
+// routes (the DLP-inspected egress channels). count_tokens is treated as a
+// second egress channel and goes through the same DLP path. Under transparent
+// interception the proxy also receives every other path to the intercepted host;
+// those are transparently passed through (and audited) by the catch-all so that
+// non-message endpoints (e.g. GET /v1/models) keep working.
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/messages", func(w http.ResponseWriter, r *http.Request) { h.process(w, r, false) })
 	mux.HandleFunc("/v1/messages/count_tokens", func(w http.ResponseWriter, r *http.Request) { h.process(w, r, true) })
+	mux.HandleFunc("/", h.passthrough)
 }
 
 func (h *Handler) process(w http.ResponseWriter, r *http.Request, isCount bool) {
@@ -100,6 +109,15 @@ func (h *Handler) process(w http.ResponseWriter, r *http.Request, isCount bool) 
 	eval := h.detector.Evaluate(r.Context(), segs, dlp.LastMessageIndex(msgs))
 	if eval.Block {
 		h.recordBlock(start, eval.BlockReason, eval.BlockSource, r.URL.Path, liveText)
+		// Fail-closed because the classifier could not vet the content (warming /
+		// sidecar down): no egress, but surface a distinct "starting up" message
+		// rather than a sensitive-content block so the user knows to just retry.
+		if eval.BlockSource == "classifier_unavailable" {
+			h.log.Info("decision", "result", "BLOCK", "reason", "classifier_unavailable",
+				"latency_ms", since(start))
+			h.writeBlock(w, req, isCount, classifierWarmingMessage)
+			return
+		}
 		h.log.Info("decision", "result", "BLOCK", "reason", eval.BlockReason,
 			"source", eval.BlockSource, "latency_ms", since(start))
 		h.writeBlock(w, req, isCount, eval.BlockReason)
@@ -142,6 +160,31 @@ func (h *Handler) forwardRaw(w http.ResponseWriter, r *http.Request, body []byte
 		return
 	}
 	h.recordAllow(start, status, true, r.URL.Path, "")
+}
+
+// passthrough transparently relays any non-message path/method to the upstream.
+// Under transparent interception the proxy receives every request to the
+// intercepted host; only /v1/messages and count_tokens carry prompt payloads and
+// are DLP-inspected. Everything else (e.g. GET /v1/models) is forwarded untouched
+// so clients keep working. This is a deliberate, AUDITED DLP coverage gap — the
+// event records method + path (no body), so the bypass is visible, not silent.
+func (h *Handler) passthrough(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	body, err := io.ReadAll(io.LimitReader(r.Body, h.maxBody))
+	if err != nil {
+		http.Error(w, "read error", http.StatusBadRequest)
+		return
+	}
+	status, ferr := h.forwarder.ForwardRaw(r.Context(), r.Method, r.URL.RequestURI(), r.Header, body, w)
+	if ferr != nil {
+		http.Error(w, "upstream error", http.StatusBadGateway)
+		h.recordPassthrough(start, r.Method, r.URL.Path, 0, false)
+		h.log.Warn("passthrough_upstream_error", "method", r.Method, "path", r.URL.Path, "err", ferr.Error())
+		return
+	}
+	h.recordPassthrough(start, r.Method, r.URL.Path, status, true)
+	h.log.Info("decision", "result", "PASSTHROUGH", "method", r.Method, "path", r.URL.Path,
+		"upstream_status", status, "latency_ms", since(start))
 }
 
 // writeBlock produces the client-facing block response. For count_tokens it
@@ -191,6 +234,16 @@ func (h *Handler) recordAllow(start time.Time, status int, upstreamCalled bool, 
 	})
 }
 
+// recordPassthrough audits a non-DLP transparent forward. Records method + path
+// (no body, no query) so the coverage gap is visible in the audit log.
+func (h *Handler) recordPassthrough(start time.Time, method, path string, status int, upstreamCalled bool) {
+	_ = h.audit.Record(storage.AuditEvent{
+		EventID: anthropic.NewBlockID(), CreatedAt: now(), EventType: "request",
+		Decision: "PASSTHROUGH", LatencyMS: since(start), ModelName: h.modelName, Backend: h.backend,
+		UpstreamCalled: upstreamCalled, Details: safePassthrough(method, path, status), Path: path,
+	})
+}
+
 // liveTurnText returns the flattened text of the latest (live) user turn, or ""
 // if there is none.
 func (h *Handler) liveTurnText(msgs []anthropic.Message) string {
@@ -235,6 +288,11 @@ func safeDetails(reason, source string) string {
 
 func safeStatus(status int) string {
 	b, _ := json.Marshal(map[string]int{"upstream_status": status})
+	return string(b)
+}
+
+func safePassthrough(method, path string, status int) string {
+	b, _ := json.Marshal(map[string]any{"method": method, "path": path, "upstream_status": status})
 	return string(b)
 }
 

@@ -10,8 +10,9 @@ import (
 )
 
 // forwardHeaders are the request headers passed through to the upstream
-// Anthropic API. The api key (x-api-key / authorization) is forwarded but never
-// stored by the proxy. Hop-by-hop and proxy-internal headers are dropped.
+// Anthropic API on the DLP-inspected message path. The api key (x-api-key /
+// authorization) is forwarded but never stored by the proxy. Hop-by-hop and
+// proxy-internal headers are dropped.
 var forwardHeaders = []string{
 	"x-api-key",
 	"authorization",
@@ -31,17 +32,26 @@ type Forwarder struct {
 	httpc *http.Client
 }
 
-// NewForwarder builds a forwarder targeting base (e.g. https://api.anthropic.com).
+// NewForwarder builds a forwarder targeting base (e.g. https://api.anthropic.com)
+// using the default transport.
 func NewForwarder(base string, timeoutMS int) *Forwarder {
+	return NewForwarderWithTransport(base, timeoutMS, nil)
+}
+
+// NewForwarderWithTransport is like NewForwarder but uses rt as the HTTP
+// transport. In transparent mode rt is the hosts-file-bypassing transport from
+// internal/upstreamdial, so the proxy reaches the REAL upstream instead of
+// looping back through its own hosts-file redirect. A nil rt uses the default.
+func NewForwarderWithTransport(base string, timeoutMS int, rt http.RoundTripper) *Forwarder {
 	return &Forwarder{
 		base:  strings.TrimRight(base, "/"),
-		httpc: &http.Client{Timeout: time.Duration(timeoutMS) * time.Millisecond},
+		httpc: &http.Client{Timeout: time.Duration(timeoutMS) * time.Millisecond, Transport: rt},
 	}
 }
 
-// Forward sends body to base+path with the allow-listed headers from in, then
-// copies the upstream status, headers, and body to w. Returns the upstream
-// status code (or 0 on transport error).
+// Forward sends body to base+path as a POST with the allow-listed headers from
+// in, then streams the upstream status, headers, and body to w. Returns the
+// upstream status code (or 0 on transport error). Used by the DLP message path.
 func (f *Forwarder) Forward(ctx context.Context, path string, in http.Header, body []byte, w http.ResponseWriter) (int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, f.base+path, bytes.NewReader(body))
 	if err != nil {
@@ -52,7 +62,29 @@ func (f *Forwarder) Forward(ctx context.Context, path string, in http.Header, bo
 			req.Header.Set(h, v)
 		}
 	}
+	return f.do(req, w)
+}
 
+// ForwardRaw transparently relays an arbitrary request (any method, path, and
+// query) to the upstream, preserving the client's headers except hop-by-hop and
+// connection-specific ones. Used by the catch-all passthrough for non-message
+// endpoints under transparent interception. requestURI is path+query
+// (r.URL.RequestURI()). A nil/empty body is sent without a request body.
+func (f *Forwarder) ForwardRaw(ctx context.Context, method, requestURI string, in http.Header, body []byte, w http.ResponseWriter) (int, error) {
+	var rdr io.Reader
+	if len(body) > 0 {
+		rdr = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, f.base+requestURI, rdr)
+	if err != nil {
+		return 0, err
+	}
+	copyPassthroughHeaders(req.Header, in)
+	return f.do(req, w)
+}
+
+// do executes req and streams the response to w.
+func (f *Forwarder) do(req *http.Request, w http.ResponseWriter) (int, error) {
 	resp, err := f.httpc.Do(req)
 	if err != nil {
 		return 0, err
@@ -70,6 +102,27 @@ func (f *Forwarder) Forward(ctx context.Context, path string, in http.Header, bo
 	w.WriteHeader(resp.StatusCode)
 	copyFlushing(w, resp.Body)
 	return resp.StatusCode, nil
+}
+
+// copyPassthroughHeaders copies every client header except hop-by-hop,
+// connection-specific, and length/host headers (Go recomputes the latter).
+func copyPassthroughHeaders(dst, src http.Header) {
+	for k, vs := range src {
+		if isHopByHop(k) || skipPassthroughHeader(k) {
+			continue
+		}
+		for _, v := range vs {
+			dst.Add(k, v)
+		}
+	}
+}
+
+func skipPassthroughHeader(h string) bool {
+	switch strings.ToLower(h) {
+	case "host", "content-length":
+		return true
+	}
+	return false
 }
 
 // copyFlushing streams src to w, flushing after each chunk so SSE deltas reach

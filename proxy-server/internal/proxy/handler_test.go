@@ -2,6 +2,8 @@ package proxy
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -180,6 +182,60 @@ func TestCountTokensBlockReturnsEstimateNoEgress(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "input_tokens") {
 		t.Errorf("count_tokens block should return a token estimate, got %s", rec.Body.String())
+	}
+}
+
+// errClassifier always fails, simulating the LFM sidecar being down/warming.
+type errClassifier struct{}
+
+func (errClassifier) Classify(context.Context, dlp.ClassifyInput) (dlp.ClassifyOutput, error) {
+	return dlp.ClassifyOutput{}, errors.New("sidecar unavailable")
+}
+
+func TestPassthroughForwardsUnknownPath(t *testing.T) {
+	var gotMethod, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		_, _ = w.Write([]byte("model-list"))
+	}))
+	defer srv.Close()
+	h := newTestHandler(srv.URL)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/models?limit=2", nil)
+	rec := httptest.NewRecorder()
+	mux := http.NewServeMux()
+	h.Register(mux)
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if gotMethod != http.MethodGet || gotPath != "/v1/models" {
+		t.Errorf("passthrough did not preserve method/path: %s %s", gotMethod, gotPath)
+	}
+	if !strings.Contains(rec.Body.String(), "model-list") {
+		t.Errorf("client did not receive upstream passthrough body: %s", rec.Body.String())
+	}
+}
+
+func TestClassifierWarmingFailsClosedWithDistinctMessage(t *testing.T) {
+	up := newMockUpstream()
+	defer up.srv.Close()
+	det := dlp.NewDetector(dlp.NewRuleEngine(), true, errClassifier{}, dlp.NewCache(64), true)
+	fwd := anthropic.NewForwarder(up.srv.URL, 5000)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	h := New(det, fwd, nil, log, true, "test", "llama", false)
+
+	rec := do(t, h, "/v1/messages", `{"model":"claude","messages":[{"role":"user","content":"please help me refactor"}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if up.calls != 0 {
+		t.Fatalf("classifier-unavailable MUST fail closed (no egress), got %d calls", up.calls)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "起動") { // distinct "starting up" wording
+		t.Errorf("expected the classifier-warming message, got: %s", body)
 	}
 }
 

@@ -1,0 +1,4 @@
+# Host-built binary staged for the sandbox (built on demand by run-sandbox.ps1).
+proxy.exe
+# Any locally-generated sandbox config.
+*.wsb
