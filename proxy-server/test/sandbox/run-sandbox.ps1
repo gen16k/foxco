@@ -18,18 +18,25 @@
 [CmdletBinding()]
 param(
     [switch]$SkipBuild,
-    [switch]$NoLaunch
+    [switch]$NoLaunch,
+    [string]$Runner = "run-tests.ps1"   # in-VM script to auto-run at logon (run-tests.ps1 | run-claude-tests.ps1)
 )
 
 $ErrorActionPreference = "Stop"
 
+if (-not (Test-Path (Join-Path $PSScriptRoot $Runner))) {
+    throw "Runner '$Runner' not found in $PSScriptRoot"
+}
+
 $repo  = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path        # proxy-server root
 $share = Join-Path $env:TEMP "foxco-dlp-sandbox-share"                # outside the repo AND outside the read-only map
+$cache = Join-Path $env:LOCALAPPDATA "foxco-sbx-cache"               # PERSISTENT across runs (llama.cpp bin + GGUF model)
 $exe   = Join-Path $PSScriptRoot "proxy.exe"
 $wsb   = Join-Path $share "dlp-proxy-test.wsb"
 
 Write-Host "Repo (read-only map): $repo"
 Write-Host "Shared results dir  : $share"
+Write-Host "Persistent cache    : $cache"
 
 # 1. Build proxy.exe on the host (the sandbox has no Go toolchain).
 if (-not $SkipBuild) {
@@ -53,6 +60,8 @@ Get-ChildItem $share -File -ErrorAction SilentlyContinue | ForEach-Object {
     try { Remove-Item $_.FullName -Force -ErrorAction Stop }
     catch { Write-Host "  (could not remove $($_.Name): in use, will overwrite)" }
 }
+# Persistent cache (NOT cleared) so heavy downloads (llama.cpp + GGUF) survive re-runs.
+New-Item -ItemType Directory -Force -Path $cache | Out-Null
 
 # 3. Generate the .wsb (UTF-8, no BOM; WindowsSandbox parses it as XML).
 $xml = @"
@@ -70,9 +79,14 @@ $xml = @"
       <SandboxFolder>C:\share</SandboxFolder>
       <ReadOnly>false</ReadOnly>
     </MappedFolder>
+    <MappedFolder>
+      <HostFolder>$cache</HostFolder>
+      <SandboxFolder>C:\cache</SandboxFolder>
+      <ReadOnly>false</ReadOnly>
+    </MappedFolder>
   </MappedFolders>
   <LogonCommand>
-    <Command>powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\repo\test\sandbox\run-tests.ps1</Command>
+    <Command>powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\repo\test\sandbox\$Runner</Command>
   </LogonCommand>
 </Configuration>
 "@

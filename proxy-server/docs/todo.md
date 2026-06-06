@@ -1,24 +1,25 @@
 # TODO / Deferred Issues
 
-## Claude Code (Node.js) は Windows 信頼ストアを見ない → CA が信頼されない
+## Claude Code の CA 信頼（当初「Windowsストアを見ない」懸念 → 実機で否定）
 
-- Status: Open
+- Status: Resolved
 - Discovered: 20260606 (docs/records/20260606/2230-sandbox-integration-test.md)
+- Resolved: 20260606 (docs/records/20260606/2339-real-claude-code-lfm-verify.md)
 
 ### Detail
 
-`install.ps1` は CA を `Cert:\LocalMachine\Root` に導入するが、**Claude Code は Node.js**
-で動き、Node は既定で OS（Windows）の証明書ストアを参照せず、バンドルした Mozilla ルートを
-使う。したがって透過モードで `api.anthropic.com` を MITM しても、Claude Code 側は導入した
-CA を信頼せず TLS 検証に失敗する見込み。`NODE_EXTRA_CA_CERTS=<...\ca.crt>`（または
-`SSL_CERT_FILE`）を Claude Code の環境に設定する必要がある。Sandbox 結合テストは schannel 系
-の `curl.exe`（マシン信頼ストアを参照）で機構を実証したため、この差異は表面化しなかった。
+当初は「Claude Code は Node.js で、Node は既定で OS 証明書ストアを見ずバンドル CA を使うため、
+`install.ps1` の `LocalMachine\Root` 導入だけでは信頼されず `NODE_EXTRA_CA_CERTS` が要る」と
+懸念していた。**Sandbox で実 Claude Code 2.1.167 を使って検証した結果、これは否定された。**
+Claude Code は既定 `CLAUDE_CODE_CERT_STORE="bundled,system"` で **Windows システムストアを参照**
+するため、`install.ps1` の CA 導入だけで透過インターセプトが成立した（`NODE_EXTRA_CA_CERTS`
+無しの run でも `/v1/messages` が proxy に到達）。`NODE_EXTRA_CA_CERTS` を明示しても成立。
 
-### Why deferred / Blocked by
+### 結論
 
-機構自体（hostsリダイレクト＋TLS終端＋DLP＋実API到達）は実証済み。実 Claude Code を使った
-連携確認は次段。`install.ps1` に `NODE_EXTRA_CA_CERTS` のマシン環境変数設定を追加するか、
-ドキュメントで案内するかを決める必要がある（環境変数の対象範囲・既存設定の上書き可否を検討）。
+`install.ps1` の現行 CA 導入で実 Claude Code に十分。追加の環境変数設定は不要（任意で併用可）。
+schannel 系の他クライアント（curl 既定等）は失効確認のため `--ssl-revoke-best-effort` 相当が要る
+点は別項参照。
 
 ### Unblock condition
 
