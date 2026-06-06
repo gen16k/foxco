@@ -20,6 +20,16 @@ const config: Config = {
       fontFamily: {
         mono: ["ui-monospace", "SFMono-Regular", "Menlo", "Consolas", "monospace"],
       },
+      keyframes: {
+        // Toast entry: slide in from the right and settle.
+        "toast-in": {
+          "0%": { opacity: "0", transform: "translateX(12px) scale(0.98)" },
+          "100%": { opacity: "1", transform: "translateX(0) scale(1)" },
+        },
+      },
+      animation: {
+        "toast-in": "toast-in 220ms ease-out",
+      },
     },
   },
   plugins: [],

@@ -5,6 +5,7 @@ import { NavTabs } from "./NavTabs";
 import { ProxyStatus } from "./ProxyStatus";
 import { TimeRangePicker } from "./TimeRangePicker";
 import { RefreshControl } from "./RefreshControl";
+import { SoundToggle } from "./SoundToggle";
 
 export function TopBar() {
   const router = useRouter();
@@ -31,6 +32,7 @@ export function TopBar() {
           <ProxyStatus />
           <TimeRangePicker />
           <RefreshControl />
+          <SoundToggle />
           <button
             onClick={logout}
             className="rounded-md border border-edge px-2.5 py-1.5 text-sm text-zinc-400 hover:bg-panelAlt"

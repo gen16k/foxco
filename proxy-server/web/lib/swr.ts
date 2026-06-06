@@ -81,6 +81,22 @@ export function useEventDetail(id: string | null) {
   );
 }
 
+// useRecentBlocks polls the newest BLOCK events on a fixed 5s cadence,
+// independent of the dashboard time range and the manual refresh interval, so
+// the live-detection alert (toasts + Live detections panel) fires even when
+// auto-refresh is "off". The watcher and the panel share this SWR key, so they
+// drive a single request, not two.
+export function useRecentBlocks(limit = 20) {
+  return useSWR<EventPage>(
+    ["recent-blocks", limit],
+    async () => {
+      const qs = new URLSearchParams({ decision: "BLOCK", limit: String(limit) });
+      return jsonFetcher(`/api/admin/events?${qs.toString()}`) as Promise<EventPage>;
+    },
+    { refreshInterval: 5000, keepPreviousData: true, revalidateOnFocus: true, dedupingInterval: 2000 },
+  );
+}
+
 export function useMeta() {
   return useSWR<Meta>("meta", async () => jsonFetcher("/api/admin/meta") as Promise<Meta>, {
     refreshInterval: 15000,
