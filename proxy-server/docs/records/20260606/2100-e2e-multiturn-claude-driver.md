@@ -1,4 +1,4 @@
-# E2E: drive a real `claude` child through the proxy, multi-turn (20260606 21:00) #pending
+# E2E: drive a real `claude` child through the proxy, multi-turn (20260606 21:00) #67e3470
 
 ## Motivation
 
