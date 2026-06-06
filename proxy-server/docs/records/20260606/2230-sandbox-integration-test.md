@@ -1,4 +1,4 @@
-# 透過HTTPSインターセプションの結合テスト（Windows Sandbox） (20260606 22:30) #pending
+# 透過HTTPSインターセプションの結合テスト（Windows Sandbox） (20260606 22:30) #ca7b3d5
 
 ## Motivation
 
