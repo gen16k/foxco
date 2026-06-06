@@ -15,7 +15,7 @@
 # To undo it:                      reg delete HKCU\Environment /F /V ANTHROPIC_BASE_URL
 
 param(
-    [string]$Config = ".\configs\config.example.yaml",
+    [string]$Config = ".\config\config.example.yaml",
     [string]$Classifier = ""   # "llama" (default via config) or "keyword"
 )
 

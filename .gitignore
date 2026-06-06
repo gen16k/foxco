@@ -4,7 +4,7 @@
 *.exe
 
 # Local LFM models (large; download separately)
-/models/
+models/
 
 # Local state / audit DB
 *.db
