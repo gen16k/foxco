@@ -20,8 +20,7 @@ training/       # LFM Guard data / fine-tuning / evals / model artifacts (planni
   Proxy** between Claude Code and the Anthropic API (LFM2.5-1.2B via a llama.cpp
   sidecar). Its design source of truth is `proxy-server/docs/spec-proxy.md`; that
   file's §1.1 is the as-built revision summary and **wins when it conflicts with the
-  rest of the spec.** Real classifier I/O measurements:
-  `proxy-server/docs/lfm2.5-classification-test.txt`.
+  rest of the spec.**
 
 ### Build, test, run (PowerShell)
 
