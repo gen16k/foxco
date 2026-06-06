@@ -12,9 +12,12 @@ upstream:
 dlp:
   # On classifier failure/timeout, block rather than allow egress.
   fail_closed: true
-  # CPU LFM inference can spike past 1.5s on a cold/idle prompt cache; too tight
-  # a timeout fail-closes benign requests. 8s is generous headroom for CPU
-  # (warm calls are ~200-300ms). Lower it for GPU/NPU.
+  # LFM inference can spike on the first/cold call: on CPU past ~1.5s, and on the
+  # AMD iGPU (Vulkan) the first call also pays one-time shader compilation (the
+  # GGUF download on a fresh machine is even slower, but that completes before the
+  # sidecar reports healthy). Too tight a timeout fail-closes benign requests, so
+  # 8s is generous headroom. Warm calls are ~200-300ms; once warm you can lower
+  # this for the iGPU (Vulkan)/NPU.
   classify_timeout_ms: 8000
   block_response_mode: "assistant_message"
   rule_guardrail:
@@ -24,7 +27,10 @@ dlp:
 
 inference:
   # MVP backend: a llama.cpp server (llama-server) exposing the OpenAI-compatible
-  # chat API. Set type to "keyword" to run without a model (dev/CI/demo fallback).
+  # chat API. On an AMD Ryzen AI APU, run the Vulkan build of llama-server so it
+  # offloads onto the integrated Radeon iGPU (`-ngl 99`); CPU is the fallback.
+  # `.\start.ps1` launches the sidecar for you (default -Backend vulkan). Set type
+  # to "keyword" to run without a model (dev/CI/demo fallback).
   type: "llama_cpp_http"
   endpoint: "http://127.0.0.1:8791"
   model: "LFM2.5-1.2B"

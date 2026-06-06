@@ -203,7 +203,7 @@ Day 2デモに向けた最小構成:
 
 ## 11. Open Questions
 
-- LFM2.5-1.2B-JP-202606の実行ランタイムは何を使うか: llama.cpp, FastFlowLM, LEAP SDKなど
+- ~~LFM2.5-1.2B-JP-202606の実行ランタイムは何を使うか: llama.cpp, FastFlowLM, LEAP SDKなど~~ → `proxy-server` は **llama.cpp サイドカー**を採用。最終環境は **AMD Ryzen AI シリーズ APU**（RDNA3.5 iGPU + XDNA2 NPU。例: Ryzen AI MAX+ 395 / Ryzen 5 350）で、**Vulkan ビルドにより内蔵 Radeon iGPU にオフロード**（CPU フォールバック、NVIDIA/CUDA は不要）。Vulkan版 llama.cpp は `winget install ggml.llamacpp`。NPU(XDNA2) は将来検討。詳細は `proxy-server/docs/spec-proxy.md`
 - プロキシ方式はOpenAI互換APIに絞るか、ブラウザ拡張/OSプロキシも見せるか
 - ChatGPT/Claude公式UIを対象にする場合、実装上どこまで通信を安全に捕捉できるか
 - Responses APIの履歴引き継ぎにどう対応するか
