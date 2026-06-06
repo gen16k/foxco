@@ -58,6 +58,21 @@ Or run the UI standalone against an already-running proxy:
 npm run dev          # http://127.0.0.1:3939 (bound to loopback)
 ```
 
+### Preview without a proxy (mock mode)
+
+To look at the console **without starting the proxy** (so your Claude Code session
+is untouched), enable mock mode — the BFF serves realistic fake data and the status
+bar shows a **MOCK DATA** badge:
+
+```powershell
+$env:USE_MOCK = "1"; npm run dev     # PowerShell
+# or add USE_MOCK=1 to web/.env.local
+```
+
+> Note: just running `proxy.exe` does not affect Claude Code unless
+> `ANTHROPIC_BASE_URL` points at it. Mock mode is only for previewing the UI with
+> no backend at all.
+
 The dev/start scripts bind `127.0.0.1` so the UI is reachable only from this
 machine. Open http://127.0.0.1:3939, sign in, and use the time-range picker + auto-refresh.
 `/` is the overview (KPIs, ALLOW/BLOCK time series, blocks-by-source, top reasons,

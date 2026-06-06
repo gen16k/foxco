@@ -21,7 +21,7 @@ export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () =>
     <div className="flex h-full min-h-[80px] flex-col items-center justify-center gap-2 text-center">
       <p className="text-sm text-block">
         {unreachable
-          ? "プロキシ (127.0.0.1:8787) に接続できません。起動していますか？"
+          ? "プロキシ (127.0.0.1:8787) に接続できません。プロキシを起動するか、USE_MOCK=1 でモックデータを表示できます。"
           : e?.message || "データの取得に失敗しました。"}
       </p>
       {onRetry && (

@@ -10,12 +10,19 @@ function Pill({ children }: { children: React.ReactNode }) {
 export function ProxyStatus() {
   const { data, error } = useMeta();
   const ok = !error && !!data;
+  const isMock = data?.backend === "mock";
   return (
     <div className="hidden items-center gap-2 text-xs text-zinc-500 lg:flex">
-      <span className="flex items-center gap-1.5">
-        <span className={clsx("h-2 w-2 rounded-full", ok ? "bg-allow" : "bg-block")} />
-        {ok ? "proxy up" : "proxy down"}
-      </span>
+      {isMock ? (
+        <span className="rounded bg-warn/15 px-1.5 py-0.5 font-semibold text-warn" title="Showing mock data (USE_MOCK=1); no proxy connected">
+          MOCK DATA
+        </span>
+      ) : (
+        <span className="flex items-center gap-1.5">
+          <span className={clsx("h-2 w-2 rounded-full", ok ? "bg-allow" : "bg-block")} />
+          {ok ? "proxy up" : "proxy down"}
+        </span>
+      )}
       {data && (
         <>
           <Pill>{data.backend || "—"}</Pill>
