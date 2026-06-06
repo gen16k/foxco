@@ -4,9 +4,9 @@
   "private": true,
   "description": "Grafana-style admin dashboard for the Local LFM DLP Proxy",
   "scripts": {
-    "dev": "next dev -p 3939",
+    "dev": "next dev -p 3939 -H 127.0.0.1",
     "build": "next build",
-    "start": "next start -p 3939",
+    "start": "next start -p 3939 -H 127.0.0.1",
     "lint": "next lint",
     "typecheck": "tsc --noEmit"
   },

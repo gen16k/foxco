@@ -43,14 +43,23 @@ copy .env.example .env.local   # then edit .env.local
 
 ## Run
 
+The easiest path is the proxy launcher, which starts the proxy **and** this UI
+together (loopback only) and wires the admin token for you:
+
 ```powershell
-# 1) start the proxy (separate terminal), e.g. with raw storage on:
-#    ..\proxy.exe -config ..\config\config.demo.yaml
-# 2) start the UI:
-npm run dev          # http://localhost:3939
+cd ..              # proxy-server
+.\start.ps1                         # proxy + admin UI on http://127.0.0.1:3939
+.\start.ps1 -NoWeb                  # proxy only
 ```
 
-Open http://localhost:3939, sign in, and use the time-range picker + auto-refresh.
+Or run the UI standalone against an already-running proxy:
+
+```powershell
+npm run dev          # http://127.0.0.1:3939 (bound to loopback)
+```
+
+The dev/start scripts bind `127.0.0.1` so the UI is reachable only from this
+machine. Open http://127.0.0.1:3939, sign in, and use the time-range picker + auto-refresh.
 `/` is the overview (KPIs, ALLOW/BLOCK time series, blocks-by-source, top reasons,
 recent events); `/history` is the full, filterable prompt history with a detail
 drawer.

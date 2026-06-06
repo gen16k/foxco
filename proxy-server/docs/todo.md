@@ -22,6 +22,7 @@
 
 `dlp.Detector.Evaluate` / `Classify` が該当セグメント（およびルール一致時はスパン）を返すよう
 拡張し、handler から `matched_snippet` に truncate して格納する。
+
 ## LFM fail-closes on benign input (false-positive blocks)
 
 - Status: Open
