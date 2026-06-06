@@ -1,4 +1,4 @@
-# AMD Ryzen AI APU 環境への移行（Vulkan iGPU 化）(20260606 19:31) #pending
+# AMD Ryzen AI APU 環境への移行（Vulkan iGPU 化）(20260606 19:31) #bf96b8f
 
 ## Motivation
 
