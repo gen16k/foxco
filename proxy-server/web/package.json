@@ -1,0 +1,36 @@
+{
+  "name": "foxco-admin-ui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Grafana-style admin dashboard for the Local LFM DLP Proxy",
+  "scripts": {
+    "dev": "next dev -p 3939 -H 127.0.0.1",
+    "build": "next build",
+    "start": "next start -p 3939 -H 127.0.0.1",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "clsx": "2.1.1",
+    "date-fns": "3.6.0",
+    "iron-session": "8.0.3",
+    "next": "14.2.15",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "recharts": "2.12.7",
+    "swr": "2.2.5",
+    "tailwind-merge": "2.5.4",
+    "zod": "3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.10",
+    "@types/react": "18.3.3",
+    "@types/react-dom": "18.3.0",
+    "autoprefixer": "10.4.20",
+    "eslint": "8.57.0",
+    "eslint-config-next": "14.2.15",
+    "postcss": "8.4.41",
+    "tailwindcss": "3.4.10",
+    "typescript": "5.5.4"
+  }
+}

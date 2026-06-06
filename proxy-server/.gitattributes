@@ -1,0 +1,5 @@
+# Flat, append-at-top docs edited by many concurrent branches: union-merge so
+# additions from different branches combine automatically (same-line edits still
+# surface as conflicts to reconcile in review). See CLAUDE.md "Documentation".
+docs/decisions.md merge=union
+docs/todo.md merge=union

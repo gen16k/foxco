@@ -1,0 +1,47 @@
+# Demo configuration for the admin UI. Uses the deterministic keyword classifier
+# (no LFM sidecar needed) and ENABLES raw prompt storage so the dashboard can show
+# prompt history + detection contents. For local demo only — not production.
+server:
+  listen_addr: "127.0.0.1:8787"
+
+upstream:
+  # Point at a local mock during the demo so ALLOW traffic never leaves the box.
+  # For a real end-to-end run, set this back to https://api.anthropic.com.
+  base_url: "http://127.0.0.1:9999"
+  timeout_ms: 60000
+
+dlp:
+  fail_closed: true
+  classify_timeout_ms: 8000
+  block_response_mode: "assistant_message"
+  rule_guardrail:
+    enabled: true
+
+inference:
+  # Keyword fallback: deterministic, no model/sidecar required.
+  type: "keyword"
+  endpoint: "http://127.0.0.1:8791"
+  model: "keyword-demo"
+  warmup_on_start: false
+  health_timeout_ms: 500
+  profile: "reason_decision"
+
+cache:
+  enabled: true
+  max_entries: 4096
+  persist_sqlite: false
+
+storage:
+  type: "sqlite"
+  # Isolated demo DB (gitignored via *.db) so it never touches the real audit log.
+  path: "demo-state/dlp.db"
+  store_raw_text: true # DEMO ONLY: persists live prompt text (may include secrets)
+  retention_days: 30
+
+logging:
+  level: "info"
+  redact_sensitive_values: true
+
+admin:
+  enabled: true
+  auth_token: "foxco-demo-token"

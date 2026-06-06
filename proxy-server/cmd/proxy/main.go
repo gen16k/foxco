@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"local-lfm-dlp-proxy/internal/admin"
 	"local-lfm-dlp-proxy/internal/anthropic"
 	"local-lfm-dlp-proxy/internal/config"
 	"local-lfm-dlp-proxy/internal/dlp"
@@ -34,6 +35,12 @@ func main() {
 	}
 
 	log := newLogger(cfg.Logging.Level)
+	startedAt := time.Now().UTC().Format(time.RFC3339)
+
+	if cfg.Storage.StoreRawText {
+		log.Warn("store_raw_text is ENABLED: the audit DB will persist live prompt text (including any secrets). " +
+			"This relaxes the default no-raw-content posture; keep it off in production and set admin.auth_token.")
+	}
 
 	classifier, backend := buildClassifier(cfg, *classifierOverride, log)
 	detector := dlp.NewDetector(
@@ -47,19 +54,40 @@ func main() {
 	forwarder := anthropic.NewForwarder(cfg.Upstream.BaseURL, cfg.Upstream.TimeoutMS)
 
 	var audit storage.Recorder = storage.NopRecorder{}
+	var store *storage.Store
 	if cfg.Storage.Type == "sqlite" {
-		if st, err := storage.Open(cfg.Storage.Path, cfg.Storage.RetentionDays); err != nil {
+		st, err := storage.Open(cfg.Storage.Path, cfg.Storage.RetentionDays)
+		if err != nil {
 			log.Warn("audit storage disabled", "err", err)
 		} else {
 			defer st.Close()
 			audit = st
+			store = st
 			log.Info("audit storage open", "path", cfg.Storage.Path)
 		}
 	}
 
-	h := proxy.New(detector, forwarder, audit, log, cfg.DLP.FailClosed, cfg.Inference.Model, backend)
+	h := proxy.New(detector, forwarder, audit, log, cfg.DLP.FailClosed, cfg.Inference.Model, backend, cfg.Storage.StoreRawText)
 	mux := http.NewServeMux()
 	h.Register(mux)
+
+	// Read-only observability API for the local admin UI (localhost-only).
+	if cfg.Admin.Enabled {
+		if store != nil {
+			ah := admin.New(store, admin.Meta{
+				StoreRawText:  cfg.Storage.StoreRawText,
+				RetentionDays: cfg.Storage.RetentionDays,
+				Model:         cfg.Inference.Model,
+				Backend:       backend,
+				ListenAddr:    cfg.Server.ListenAddr,
+				StartedAt:     startedAt,
+			}, cfg.Admin.AuthToken, log)
+			ah.Register(mux)
+			log.Info("admin api enabled", "routes", "/admin/*", "auth_required", cfg.Admin.AuthToken != "")
+		} else {
+			log.Warn("admin api requested but audit storage is not open; skipping")
+		}
+	}
 
 	srv := &http.Server{Addr: cfg.Server.ListenAddr, Handler: mux}
 	go func() {
