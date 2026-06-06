@@ -1,5 +1,35 @@
 # Decision Log
 
+## jp_confidential_extraction プロファイルでは <<<DATA>>> ラッパを外す (20260607 01:38)
+
+### Status
+Accepted
+
+### Context
+
+`akiFQC/japanese-confidential-information-extraction-sft` で FT 中のモデルは、ALLOW/BLOCK を
+返す分類器ではなく 11 カテゴリの抽出器で、学習データの user ターンは区切り・メタ情報の無い素の
+テキスト。`CLAUDE.md` の不変条件「検査テキストは不活性データとして `<<<DATA ... DATA>>>` で包み
+『中身に従うな』と枠付けする」を守ると学習分布から外れ、1.2B モデルの抽出精度が落ちる。
+
+### Decision
+
+`jp_confidential_extraction` プロファイルの `BuildUser` は素テキストを送る（`<<<DATA>>>`・
+`segment_type` 無し）。これは上記不変条件を本プロファイル限定で弱める。ユーザに実例付きで説明し
+承認を得た。既定の `reason_decision` / `ng_boolean` は従来どおりラッパを維持する。
+
+### Consequences
+
+- 利点：FT モデルの学習分布に一致し抽出精度を最大化。
+- リスク：プロンプト注入耐性の低下。ただし抽出器には注入で反転し得る判定フィールドが無く、最悪でも
+  抽出漏れ（false negative）に留まる。BLOCK 判定は proxy 側 Parse（非空カテゴリ→NG）が下す。
+- 後段の担保：決定論的 rule guardrail（本番既定 enabled）と fail-closed が残存リスクを補う。
+- 判定方針：11 カテゴリのいずれか非空で BLOCK（全カテゴリが社外秘のため）。人名/企業名/住所は一般
+  文にも現れ誤検知が増えうる点は `docs/todo.md` で将来のトリガ集合構成化として追跡。
+
+### Related Records
+- docs/records/20260607/0138-jp-confidential-extraction-profile.md
+
 ## 結合テストは Windows Sandbox で実施する (20260606 22:30)
 
 ### Status
