@@ -22,7 +22,7 @@ export function Panel({
         <header className="flex items-center justify-between gap-2 border-b border-edge px-4 py-2.5">
           <div className="min-w-0">
             {title && <h2 className="truncate text-sm font-medium text-zinc-200">{title}</h2>}
-            {subtitle && <p className="truncate text-xs text-zinc-500">{subtitle}</p>}
+            {subtitle && <p className="truncate text-xs text-zinc-400">{subtitle}</p>}
           </div>
           {right}
         </header>

@@ -20,7 +20,7 @@ export function TopReasonsBars({ reasons }: { reasons: ReasonCount[] }) {
           >
             <div className="flex items-center justify-between gap-2 text-xs">
               <span className="truncate text-zinc-300 group-hover:text-zinc-100">{r.reason}</span>
-              <span className="shrink-0 tabular-nums text-zinc-500">{r.count}</span>
+              <span className="shrink-0 tabular-nums text-zinc-400">{r.count}</span>
             </div>
             <div className="mt-1 h-1.5 w-full overflow-hidden rounded bg-panelAlt">
               <div

@@ -90,9 +90,12 @@ explicitly and confirmed with the user.
   are never persisted under any setting.
   * **Opt-in exception (`storage.store_raw_text`, default `false`).** When a user
     deliberately sets it `true`, the audit DB ALSO persists the live user-turn
-    prompt (`audit_events.prompt_text`) for every request so the local admin UI
-    can show prompt history + detection contents. This was added with explicit
-    user confirmation (see `docs/decisions.md`, 20260606). It then stores secrets,
+    prompt (`audit_events.prompt_text`) for every request — and, on a block, the
+    offending span (`audit_events.matched_snippet`, a substring of the prompt) so
+    the local admin UI can show prompt history + highlight the detected content.
+    The safe `reason`/`details_json` still never contain the secret value. This
+    was added with explicit user confirmation (see `docs/decisions.md`,
+    20260606). It then stores secrets,
     protected only by retention, the localhost bind, OS file permissions, and the
     optional `admin.auth_token` — i.e. advisory, not an enforcement boundary. Keep
     it `false` in production; enable it only for a local demo and pair it with

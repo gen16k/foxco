@@ -38,6 +38,9 @@ type Result struct {
 	Decision Decision
 	Reason   string // human-readable, safe to surface (never contains the secret)
 	Source   string // "rule", "lfm", or "classifier_unavailable"
+	Match    string // offending text: rule => exact match span; lfm => whole segment.
+	// Match IS the sensitive value. It is surfaced only to the opt-in raw-text
+	// store (matched_snippet) for highlighting; it must never enter Reason.
 }
 
 // ClassifyInput is what the proxy hands the LFM classifier.

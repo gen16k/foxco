@@ -18,6 +18,21 @@ export function fmtLocalDateTime(iso: string): string {
   return d.toLocaleString();
 }
 
+// Compact relative age: "just now", "12s", "3m", "1h", "2d". Used by the live
+// detection feed/toasts, which re-render on each poll so the value stays fresh.
+export function fmtRelative(iso: string, nowMs: number = Date.now()): string {
+  const t = new Date(iso).getTime();
+  if (isNaN(t)) return iso;
+  const s = Math.max(0, Math.round((nowMs - t) / 1000));
+  if (s < 5) return "just now";
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
+}
+
 export function fmtClock(iso: string): string {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return iso;

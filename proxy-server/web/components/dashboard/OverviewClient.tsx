@@ -12,6 +12,7 @@ import { AllowBlockArea } from "@/components/charts/AllowBlockArea";
 import { SourceDonut } from "@/components/charts/SourceDonut";
 import { TopReasonsBars } from "@/components/charts/TopReasonsBars";
 import { EventsTable } from "@/components/history/EventsTable";
+import { LiveDetectionsPanel } from "@/components/dashboard/LiveDetectionsPanel";
 
 export function OverviewClient() {
   const router = useRouter();
@@ -25,6 +26,8 @@ export function OverviewClient() {
   return (
     <div className="space-y-4">
       <KpiRow stats={data} loading={isLoading && !data} />
+
+      <LiveDetectionsPanel />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Panel title="Requests over time" subtitle="ALLOW vs BLOCK" className="lg:col-span-2">

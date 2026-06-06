@@ -56,18 +56,18 @@ export function SourceDonut({ bySource }: { bySource: Record<string, number> }) 
         </ResponsiveContainer>
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
           <span className="text-2xl font-semibold text-zinc-100">{total}</span>
-          <span className="text-xs text-zinc-500">blocks</span>
+          <span className="text-xs text-zinc-400">blocks</span>
         </div>
       </div>
       <ul className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs">
         {data.map((d) => (
           <li key={d.name} className="flex items-center gap-1.5 text-zinc-400">
             <span className="h-2 w-2 rounded-full" style={{ background: COLORS[d.name] ?? "#6e7681" }} />
-            {d.name} <span className="tabular-nums text-zinc-500">({d.value})</span>
+            {d.name} <span className="tabular-nums text-zinc-400">({d.value})</span>
           </li>
         ))}
       </ul>
-      <p className="mt-2 text-[11px] text-zinc-600">スライスをクリックで履歴を絞り込み</p>
+      <p className="mt-2 text-2xs text-zinc-500">スライスをクリックで履歴を絞り込み</p>
     </div>
   );
 }

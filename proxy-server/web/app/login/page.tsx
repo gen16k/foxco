@@ -48,7 +48,7 @@ function LoginForm() {
           </div>
           <div>
             <h1 className="text-lg font-semibold text-zinc-100">FoxCo DLP</h1>
-            <p className="text-xs text-zinc-500">Admin dashboard</p>
+            <p className="text-xs text-zinc-400">Admin dashboard</p>
           </div>
         </div>
 
@@ -83,10 +83,6 @@ function LoginForm() {
         >
           {loading ? "サインイン中…" : "サインイン"}
         </button>
-
-        <p className="mt-4 text-center text-[11px] text-zinc-600">
-          ローカル管理用。認証情報は .env.local で設定します。
-        </p>
       </form>
     </main>
   );

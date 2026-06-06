@@ -25,6 +25,25 @@ func TestRuleEngineMatches(t *testing.T) {
 	}
 }
 
+func TestRuleEngineMatchSpanReturnsExactValue(t *testing.T) {
+	e := NewRuleEngine()
+	const key = "AKIAIOSFODNN7EXAMPLE"
+	name, span, ok := e.MatchSpan("AWS_ACCESS_KEY_ID=" + key + " in the config")
+	if !ok || name != "aws_access_key" {
+		t.Fatalf("MatchSpan = (%q,%q,%v), want aws_access_key", name, span, ok)
+	}
+	if span != key {
+		t.Errorf("span = %q, want exactly %q (no surrounding text)", span, key)
+	}
+}
+
+func TestRuleEngineMatchSpanEmptyOnNoMatch(t *testing.T) {
+	e := NewRuleEngine()
+	if name, span, ok := e.MatchSpan("just some ordinary prose"); ok || name != "" || span != "" {
+		t.Errorf("MatchSpan on benign text = (%q,%q,%v), want empty/false", name, span, ok)
+	}
+}
+
 func TestRuleEngineNoFalsePositiveOnPlainCode(t *testing.T) {
 	e := NewRuleEngine()
 	benign := []string{

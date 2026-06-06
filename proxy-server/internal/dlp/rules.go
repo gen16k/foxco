@@ -35,10 +35,20 @@ func NewRuleEngine() *RuleEngine {
 
 // Match reports whether any rule fires, returning the first rule's name.
 func (e *RuleEngine) Match(text string) (string, bool) {
+	name, _, hit := e.MatchSpan(text)
+	return name, hit
+}
+
+// MatchSpan is like Match but also returns the exact matched substring (the
+// offending value). The span is the precise text the highlight UI marks; it is
+// the secret itself, so callers must persist it ONLY under the opt-in raw-text
+// gate and must never place it in a block reason (the reason carries the rule
+// name only).
+func (e *RuleEngine) MatchSpan(text string) (name, span string, hit bool) {
 	for _, r := range e.rules {
-		if r.re.MatchString(text) {
-			return r.name, true
+		if loc := r.re.FindStringIndex(text); loc != nil {
+			return r.name, text[loc[0]:loc[1]], true
 		}
 	}
-	return "", false
+	return "", "", false
 }
