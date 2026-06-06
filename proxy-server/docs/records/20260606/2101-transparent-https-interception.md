@@ -1,4 +1,4 @@
-# 透過HTTPSインスペクション（hostsリダイレクト + 自己CA + Windowsサービス） (20260606 21:01) #pending
+# 透過HTTPSインスペクション（hostsリダイレクト + 自己CA + Windowsサービス） (20260606 21:01) #fcbcee8
 
 ## Motivation
 
