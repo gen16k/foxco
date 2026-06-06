@@ -31,7 +31,7 @@ export function TimeRangePicker() {
       >
         <span aria-hidden>🕓</span>
         {activeRangeLabel({ range, from, to })}
-        <span className="text-zinc-600">▾</span>
+        <span className="text-zinc-500">▾</span>
       </button>
 
       {open && (
@@ -57,15 +57,15 @@ export function TimeRangePicker() {
             </div>
 
             <div className="mt-2 border-t border-edge pt-2">
-              <p className="mb-1 text-2xs uppercase tracking-wide text-zinc-500">Custom range</p>
-              <label className="mb-1 block text-2xs text-zinc-500">From</label>
+              <p className="mb-1 text-2xs uppercase tracking-wide text-zinc-400">Custom range</p>
+              <label className="mb-1 block text-2xs text-zinc-400">From</label>
               <input
                 type="datetime-local"
                 value={fromLocal}
                 onChange={(e) => setFromLocal(e.target.value)}
                 className="mb-2 w-full rounded border border-edge bg-ink px-2 py-1 text-xs text-zinc-200"
               />
-              <label className="mb-1 block text-2xs text-zinc-500">To</label>
+              <label className="mb-1 block text-2xs text-zinc-400">To</label>
               <input
                 type="datetime-local"
                 value={toLocal}

@@ -12,7 +12,7 @@ export function ProxyStatus() {
   const ok = !error && !!data;
   const isMock = data?.backend === "mock";
   return (
-    <div className="hidden items-center gap-2 text-xs text-zinc-500 lg:flex">
+    <div className="hidden items-center gap-2 text-xs text-zinc-400 lg:flex">
       {isMock ? (
         <span className="rounded bg-warn/15 px-1.5 py-0.5 font-semibold text-warn" title="Showing mock data (USE_MOCK=1); no proxy connected">
           MOCK DATA

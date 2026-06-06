@@ -8,7 +8,7 @@ export function Skeleton({ className }: { className?: string }) {
 
 export function EmptyState({ message = "No data in this range." }: { message?: string }) {
   return (
-    <div className="flex h-full min-h-[80px] items-center justify-center text-center text-sm text-zinc-600">
+    <div className="flex h-full min-h-[80px] items-center justify-center text-center text-sm text-zinc-500">
       {message}
     </div>
   );

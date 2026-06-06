@@ -23,7 +23,7 @@ export function LiveDetectionsPanel() {
       title="Live detections"
       subtitle="直近のブロック（自動更新）"
       right={
-        <span className="flex items-center gap-1.5 text-2xs text-zinc-500">
+        <span className="flex items-center gap-1.5 text-2xs text-zinc-400">
           <span className="relative flex h-2 w-2">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-block opacity-60 motion-reduce:hidden" />
             <span className="relative inline-flex h-2 w-2 rounded-full bg-block" />

@@ -70,7 +70,7 @@ function ToastCard({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }
         <button onClick={open} className="min-w-0 flex-1 text-left">
           <div className="flex items-center gap-2">
             <span className="text-xs font-semibold text-block">送信をブロックしました</span>
-            <span className="text-2xs uppercase tracking-wide text-zinc-500">{event.source || "—"}</span>
+            <span className="text-2xs uppercase tracking-wide text-zinc-400">{event.source || "—"}</span>
           </div>
           <p className="mt-0.5 truncate text-xs text-zinc-300">{event.reason || "blocked"}</p>
           {detail && (
@@ -78,12 +78,12 @@ function ToastCard({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }
               {detail}
             </p>
           )}
-          <p className="mt-1 text-2xs text-zinc-500">{fmtRelative(event.createdAt)} · クリックで詳細 ↗</p>
+          <p className="mt-1 text-2xs text-zinc-400">{fmtRelative(event.createdAt)} · クリックで詳細 ↗</p>
         </button>
         <button
           onClick={onDismiss}
           aria-label="閉じる"
-          className="rounded px-1 text-zinc-500 hover:bg-panelAlt hover:text-zinc-300"
+          className="rounded px-1 text-zinc-400 hover:bg-panelAlt hover:text-zinc-300"
         >
           ✕
         </button>

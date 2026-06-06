@@ -17,7 +17,7 @@ export function Pagination({
   const canNext = offset + limit < total;
   const btn = "rounded border border-edge px-2 py-1 text-xs disabled:opacity-40";
   return (
-    <div className="flex items-center justify-between text-xs text-zinc-500">
+    <div className="flex items-center justify-between text-xs text-zinc-400">
       <span>
         {from}–{to} / {total}
       </span>
