@@ -1,5 +1,30 @@
 # TODO / Deferred Issues
 
+## 透過モード(:443のみ)だと admin UI が admin API に到達できない
+
+- Status: Open
+- Discovered: 20260607 (admin-UI 機能を透過インターセプションへマージした際に判明)
+
+### Detail
+
+admin API は proxy と同じ mux に登録され、`app.servers` の全リスナで提供される。既定
+`mode: transparent` ではリスナは `:443`（TLS, SNI=api.anthropic.com のリーフ）のみで、平文
+`:8787` は上がらない。一方 admin UI（`start.ps1` が起動、`web/`）は `server.listen_addr`
+（既定 `127.0.0.1:8787`）の平文 HTTP へ接続する想定。よって transparent 単独だと admin UI は
+admin API に繋がらない（`mode: both` か `proxy` で `:8787` を上げれば到達）。さらに `start.ps1`
+のコンソール起動は transparent 構成だと `:443` バインド＋hosts 編集（要管理者・ホスト影響）を
+行うため、dev フローとして整理が要る。
+
+### Why deferred / Blocked by
+
+両機能の既定ワークフローが異なるための統合課題。設計判断が必要：admin API を常に平文
+localhost（`:8787` か専用 admin ポート）でも提供するか、admin UI を transparent 前提へ寄せるか、
+デモ時は `mode: both` を案内するか。
+
+### Unblock condition
+
+admin UI ＋ transparent モード併用の方針を決め、リスナ構成（または専用 admin リスナ）を実装する。
+
 ## Claude Code の CA 信頼（当初「Windowsストアを見ない」懸念 → 実機で否定）
 
 - Status: Resolved
