@@ -9,7 +9,7 @@ The evaluation is a fixed-set model comparison, not a training curve. W&B is the
 - `prepare_eval_from_hf.py`: creates a fixed evaluation JSONL from the Hugging Face validation split
 - `run_ollama_baselines.py`: runs local Ollama models and writes raw predictions
 - `evaluate_and_log_wandb.py`: evaluates predictions and optionally logs W&B tables
-- `validation_10_eval.jsonl`: fixed 10-case evaluation set
+- `validation_10_eval.jsonl`: seed-fixed random 10-case evaluation set
 - `validation_10_ollama_outputs.jsonl`: raw outputs from two baseline models
 - `validation_10_ollama.metrics.json`: detailed metrics JSON
 - `Evaluation_Result.md`: human-readable result summary
@@ -37,10 +37,10 @@ Detailed precision/recall/F1 metrics are kept in the local metrics JSON and W&B 
 
 The current `validation_10_eval.jsonl` is an initial baseline check.
 
-- It uses the first 10 rows of the validation split, so it is reproducible but not necessarily representative.
+- It uses a seed-fixed random sample from the validation split (`--sample random --seed 20260607 --limit 10`), so it is reproducible but still small.
 - Scoring is strict exact match. Near misses such as longer spans, shorter spans, merged entities, or whitespace differences may be counted as incorrect.
 - Schema validity is intentionally strict because PromptGate needs stable structured output for proxy use.
-- For the final comparison, prefer a seed-fixed random sample or a category-balanced subset that covers PromptGate-specific categories.
+- For the final comparison, prefer a larger random sample or a category-balanced subset that covers PromptGate-specific categories.
 
 ## Reproduce Validation-10 Baseline
 
@@ -87,9 +87,9 @@ Expected W&B outputs:
 Commands:
 
 ```powershell
-uv run --with datasets python training\evaluation\prepare_eval_from_hf.py --limit 10 --out training\evaluation\validation_10_eval.jsonl
+uv run --with datasets python training\evaluation\prepare_eval_from_hf.py --sample random --seed 20260607 --limit 10 --out training\evaluation\validation_10_eval.jsonl
 python training\evaluation\run_ollama_baselines.py --input training\evaluation\validation_10_eval.jsonl --out training\evaluation\validation_10_ollama_outputs.jsonl
-uv run --with wandb python training\evaluation\evaluate_and_log_wandb.py --input training\evaluation\validation_10_ollama_outputs.jsonl --out training\evaluation\validation_10_ollama.metrics.json --wandb-mode online --wandb-project promptgate --wandb-run-name promptgate-validation10-official-model-names-20260607
+uv run --with wandb python training\evaluation\evaluate_and_log_wandb.py --input training\evaluation\validation_10_ollama_outputs.jsonl --out training\evaluation\validation_10_ollama.metrics.json --wandb-mode online --wandb-project promptgate --wandb-run-name promptgate-validation10-random-seed20260607
 ```
 
 To evaluate without W&B:

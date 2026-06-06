@@ -29,7 +29,7 @@ Step-based graphs are not useful for the current baseline comparison because eac
 
 Current validation-10 run:
 
-https://wandb.ai/aki310-sony-semiconductors/promptgate/runs/pst7vmz7
+https://wandb.ai/aki310-sony-semiconductors/promptgate/runs/k25spzc0
 
 Compared models:
 
@@ -60,7 +60,7 @@ WANDB_PROJECT=promptgate
 ```
 
 ```powershell
-uv run --with datasets python training\evaluation\prepare_eval_from_hf.py --limit 10 --out training\evaluation\validation_10_eval.jsonl
+uv run --with datasets python training\evaluation\prepare_eval_from_hf.py --sample random --seed 20260607 --limit 10 --out training\evaluation\validation_10_eval.jsonl
 python training\evaluation\run_ollama_baselines.py --input training\evaluation\validation_10_eval.jsonl --out training\evaluation\validation_10_ollama_outputs.jsonl
 uv run --with wandb python training\evaluation\evaluate_and_log_wandb.py --input training\evaluation\validation_10_ollama_outputs.jsonl --out training\evaluation\validation_10_ollama.metrics.json --wandb-mode online --wandb-project promptgate
 ```

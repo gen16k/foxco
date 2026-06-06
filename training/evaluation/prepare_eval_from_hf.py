@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 from pathlib import Path
 from typing import Any
 
@@ -73,21 +74,35 @@ def main() -> None:
     parser.add_argument("--split", default="validation")
     parser.add_argument("--limit", type=int, default=10)
     parser.add_argument("--offset", type=int, default=0)
+    parser.add_argument("--sample", choices=["random", "first"], default="random")
+    parser.add_argument("--seed", type=int, default=20260607)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
 
     from datasets import load_dataset
 
     dataset = load_dataset(args.dataset, split=args.split)
-    selected = dataset.select(range(args.offset, args.offset + args.limit))
+    if args.limit < 1:
+        raise ValueError("--limit must be positive")
+    if args.limit > len(dataset):
+        raise ValueError(f"--limit must be <= dataset size ({len(dataset)})")
+
+    if args.sample == "first":
+        indices = list(range(args.offset, args.offset + args.limit))
+    else:
+        rng = random.Random(args.seed)
+        indices = sorted(rng.sample(range(len(dataset)), args.limit))
+
+    selected = dataset.select(indices)
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with args.out.open("w", encoding="utf-8") as handle:
-        for i, row in enumerate(selected, args.offset):
-            case = row_to_eval_case(dict(row), i)
+        for index, row in zip(indices, selected):
+            case = row_to_eval_case(dict(row), index)
             handle.write(json.dumps(case, ensure_ascii=False) + "\n")
 
-    print(f"Wrote {len(selected)} cases to {args.out}")
+    print(f"Wrote {len(selected)} {args.sample} cases to {args.out}")
+    print("indices=" + ",".join(str(index) for index in indices))
 
 
 if __name__ == "__main__":
