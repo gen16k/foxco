@@ -1,5 +1,36 @@
 # Decision Log
 
+## 結合テストは Windows Sandbox で実施する (20260606 22:30)
+
+### Status
+Accepted
+
+### Context
+
+透過インターセプションの結合テスト（実 hosts編集・`:443`バインド・CA信頼ストア導入・実
+`api.anthropic.com` アクセス）は、ホスト上で稼働中の Claude セッションを壊し得るため当初は
+保留していた。ユーザが使い捨て・NAT分離の **Windows Sandbox** を用意した。
+
+### Decision
+
+結合テストは Windows Sandbox 内でのみ実施する。ホストリポは read-only マップ、結果は read-write
+の共有フォルダ経由で回収。クライアントは schannel の `curl.exe`（マシン信頼ストア参照、`-k` 不使用）。
+無害な401プローブ（無効キー＋良性プロンプト、機密ゼロ）で実 API 到達を確認する。ハーネスは
+`test/sandbox/`（`run-sandbox.ps1` ホストランチャ + `run-tests.ps1` VM内オーケストレータ）、
+`install.ps1 -SkipBuild` でホストビルド済み exe を再利用（VM に Go 不要）。
+
+### Consequences
+
+- 32/32 PASS で機構を端から端まで実証（hostsリダイレクト→CA信頼→`:443`終端→DLP→`1.1.1.1`
+  バイパスで実API到達→透過→完全アンインストール）。ホストは無傷。
+- 発見した follow-up（`docs/todo.md`）：Claude Code(Node) は Windows 信頼ストアを見ない＝
+  `NODE_EXTRA_CA_CERTS` が要る／動的証明書に CRL/OCSP が無く schannel が失効確認で失敗する。
+- Windows Sandbox(GUI) は RDP 対話デスクトップが前面のときのみ起動成立、終了はウィンドウを
+  ×で閉じる（force-kill は VM ワーカー孤児化を招く）。
+
+### Related Records
+- docs/records/20260606/2230-sandbox-integration-test.md
+
 ## 透過HTTPSインスペクションを既定の接続方式にする (20260606 21:01)
 
 ### Status

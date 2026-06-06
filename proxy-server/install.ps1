@@ -20,7 +20,8 @@ param(
     [string]$Backend = "vulkan",
     [string]$Model = "LiquidAI/LFM2.5-1.2B-Instruct-GGUF:Q4_K_M",
     [int]$LlamaPort = 8791,
-    [switch]$StartNow   # opt-in: start the service immediately (will redirect api.anthropic.com now)
+    [switch]$StartNow,   # opt-in: start the service immediately (will redirect api.anthropic.com now)
+    [switch]$SkipBuild   # reuse an existing proxy.exe instead of building (CI / sandbox tests)
 )
 
 $ErrorActionPreference = "Stop"
@@ -46,10 +47,18 @@ $caCrt = Join-Path $caDir "ca.crt"
 Write-Host "== Local LFM DLP Proxy installer ==" -ForegroundColor Cyan
 Write-Host "Install root: $InstallRoot"
 
-# 1. Build proxy.exe.
-Write-Host "Building proxy.exe..."
-& go build -o $exeSrc .\cmd\proxy
-if ($LASTEXITCODE -ne 0) { throw "go build failed" }
+# 1. Build proxy.exe (or, with -SkipBuild, reuse one built elsewhere — e.g. a host
+#    build mapped into a Windows Sandbox, or a CI artifact, where Go is not present).
+if ($SkipBuild) {
+    if (-not (Test-Path $exeSrc)) {
+        throw "-SkipBuild set but $exeSrc not found. Build it first: go build -o proxy.exe .\cmd\proxy"
+    }
+    Write-Host "Skipping build; using existing $exeSrc"
+} else {
+    Write-Host "Building proxy.exe..."
+    & go build -o $exeSrc .\cmd\proxy
+    if ($LASTEXITCODE -ne 0) { throw "go build failed" }
+}
 
 # 2. Create the data tree and lock down the CA directory (SYSTEM + Administrators only).
 foreach ($d in @($InstallRoot, $caDir, (Join-Path $InstallRoot "state"), (Join-Path $InstallRoot "logs"))) {

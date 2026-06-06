@@ -33,7 +33,7 @@
 ## Results
 
 - `gofmt -l`（自分の変更分）/ `go vet ./...` / `go build ./...` / `go test ./...` いずれも green（CRLFワークツリー由来の gofmt ノイズはコミット時に LF 正規化されるため無害）。
-- **結合テストは未実施（意図的）**：実 hosts編集・443バインド・CA導入・実APIアクセスは、このマシンで稼働中の Claude セッションを壊し得るため、ユーザ指示があってから実施する。`install.ps1` も未実行。
+- **結合テストは Windows Sandbox で実施済み（20260606 22:30、32/32 PASS）**：実 hosts編集・443バインド・CA導入・実 `api.anthropic.com` アクセス（無害な401プローブ）を使い捨て・NAT分離VMで端から端まで確認。ホストや稼働中 Claude セッションには無影響。詳細は `docs/records/20260606/2230-sandbox-integration-test.md`。
 
 ## Refs
 - docs/decisions.md（20260606 21:01）
