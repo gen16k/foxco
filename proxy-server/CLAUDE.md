@@ -1,34 +1,29 @@
 # Repository Rules
 
-Work in small, tested, documented commits. Prefer practical progress over excessive process, but keep enough records for future maintainers to understand what changed and why.
+These rules govern the `proxy-server/` subtree only. Paths below are relative to
+this directory. Work in small, tested, documented commits. Prefer practical
+progress over excessive process, but keep enough records for future maintainers to
+understand what changed and why.
 
 ## Project
 
-**FoxCo** — a local LFM prompt firewall that inspects prompts *before* they leave
-for a cloud LLM. A local **LFM** (Liquid Foundation Model) classifies the content
-and the system blocks / masks / locally-answers sensitive egress. The repo is a
-monorepo:
+The **Local LFM DLP Proxy** — the `proxy-server/` component of FoxCo. It sits
+between **Claude Code** and the Anthropic API, inspects every outbound request, and
+asks a local **LFM** (Liquid Foundation Model, LFM2.5-1.2B via a llama.cpp sidecar)
+whether the content is safe to send. Sensitive egress is **blocked**; once-blocked
+history is sanitized so it never leaks on a later turn. Written in Go (module
+`local-lfm-dlp-proxy`), targets Windows / AMD Ryzen AI.
 
-```text
-proxy-server/   # the Go proxy that sits in front of the cloud LLM (the implemented MVP)
-training/       # LFM Guard data / fine-tuning / evals / model artifacts (planning stage)
-```
-
-* Repo-wide overview: `README.md`. Per-area intent: `proxy-server/README.md`,
-  `training/README.md`.
-* **`proxy-server/`** is the working Go implementation today — the **Local LFM DLP
-  Proxy** between Claude Code and the Anthropic API (LFM2.5-1.2B via a llama.cpp
-  sidecar). Its design source of truth is `proxy-server/docs/spec-proxy.md`; that
-  file's §1.1 is the as-built revision summary and **wins when it conflicts with the
-  rest of the spec.**
+* The repo-wide FoxCo overview is the root `../README.md`; this subtree's overview
+  is `README.md`.
+* Design source of truth: `docs/spec-proxy.md`. Its §1.1 is the as-built revision
+  summary and **wins when it conflicts with the rest of the spec.**
 
 ### Build, test, run (PowerShell)
 
-The Go module lives at `proxy-server/` (module `local-lfm-dlp-proxy`). Run Go
-commands from that directory:
+Run from this directory (the Go module root):
 
 ```powershell
-cd proxy-server
 go build -o proxy.exe ./cmd/proxy
 go test ./...
 
@@ -44,20 +39,21 @@ $env:ANTHROPIC_BASE_URL = "http://127.0.0.1:8787"
 claude
 ```
 
-### proxy-server/ layout
+### Layout
 
 | Path | Responsibility |
 |------|----------------|
-| `proxy-server/cmd/proxy` | entrypoint, config + classifier wiring, HTTP server |
-| `proxy-server/internal/proxy` | request flow handler (parse → evaluate → sanitize → forward) |
-| `proxy-server/internal/anthropic` | Messages API types (round-trip safe), block response, SSE, forwarder |
-| `proxy-server/internal/dlp` | normalize, segment, rule guardrail, cache, LFM detector/policy |
-| `proxy-server/internal/inference` | llama.cpp client (LFM) + keyword fallback classifier + `PromptProfile` |
-| `proxy-server/internal/sanitizer` | structure-aware history unit removal + validation |
-| `proxy-server/internal/storage` | SQLite audit log (no raw text / secrets) |
-| `proxy-server/internal/config` | YAML config + safe defaults |
-| `proxy-server/config` | example config (`config.example.yaml`) |
-| `proxy-server/web` | admin / demo UI (placeholder; future scope) |
+| `cmd/proxy` | entrypoint, config + classifier wiring, HTTP server |
+| `internal/proxy` | request flow handler (parse → evaluate → sanitize → forward) |
+| `internal/anthropic` | Messages API types (round-trip safe), block response, SSE, forwarder |
+| `internal/dlp` | normalize, segment, rule guardrail, cache, LFM detector/policy |
+| `internal/inference` | llama.cpp client (LFM) + keyword fallback classifier + `PromptProfile` |
+| `internal/sanitizer` | structure-aware history unit removal + validation |
+| `internal/storage` | SQLite audit log (no raw text / secrets) |
+| `internal/config` | YAML config + safe defaults |
+| `config` | example config (`config.example.yaml`) |
+| `web` | admin / demo UI (placeholder; future scope) |
+| `docs` | design spec + work records / knowledge / decisions / todo (see below) |
 
 ## Workflow
 
@@ -92,20 +88,20 @@ explicitly and confirmed with the user.
 * **Advisory, not tamper-proof.** This is a per-user localhost proxy selected via
   `ANTHROPIC_BASE_URL`; a user who unsets the env var or stops the process bypasses
   it. Do not describe it as an enforcement boundary. See the threat model in
-  `proxy-server/README.md` / `proxy-server/docs/spec-proxy.md`.
+  `README.md` / `docs/spec-proxy.md`.
 * **Output parsing is tolerant + fail-closed.** llama.cpp does not always enforce
   the JSON schema, so the parser reads JSON `decision` first, then scans for a bare
   `ALLOW` / `BLOCK` token, and treats anything unrecognized as a classification
   error → block. When changing the LFM I/O contract, do it through a `PromptProfile`
-  (`proxy-server/internal/inference/profile.go`), not by editing call sites ad hoc.
+  (`internal/inference/profile.go`), not by editing call sites ad hoc.
 
 ## Documentation
 
-Repo-wide documentation lives under a top-level `docs/`; area-specific design docs
-stay with their area (e.g. `proxy-server/docs/spec-proxy.md`).
+All documentation for this component lives under `docs/`.
 
 ```text
 docs/
+  spec-proxy.md                       # design spec (source of truth; §1.1 = as-built)
   records/                            # required: work records
     YYYYMMDD/HHMM-<slug>.md           #   one file per work segment
   knowledges/                         # optional: technical knowledge notes
@@ -218,18 +214,16 @@ The `Unblock condition` section is optional — omit it when "Blocked by" alread
 
 ## Permissions
 
-* This is a local Windows development checkout. Agents may create, modify, move, and delete files in this repository, and run tests, linters, formatters, builds, the local proxy / llama.cpp sidecar, and Git commands.
+* This is a local Windows development checkout. Agents may create, modify, move, and delete files in this subtree, and run tests, linters, formatters, builds, the local proxy / llama.cpp sidecar, and Git commands.
 * Do **not** send real secrets, credentials, or private content to the real Anthropic API while developing. For local testing use the keyword classifier (`-classifier keyword`) and a mock upstream; reserve `https://api.anthropic.com` for deliberate end-to-end checks with non-sensitive input.
 * The proxy forwards the caller's `x-api-key` / `Authorization` upstream and must never persist them. Keep API keys out of the repo, config examples, logs, and the audit DB.
-* `training/data/` holds only synthetic / demo data — never commit real PII or real confidential content there.
 
 ## Branching and concurrent development
 
 * Unless the user explicitly says to work on `main`, create a branch via
-  `git worktree` and make changes there:
+  `git worktree` (from the repository root) and make changes there:
     ```powershell
     git worktree add .worktrees/<topic> -b <branch-name>
-    cd .worktrees/<topic>
     ```
   Clean up the worktree (`git worktree remove`) once the branch has been
   merged or abandoned.
@@ -243,10 +237,9 @@ The `Unblock condition` section is optional — omit it when "Blocked by" alread
 
 ## Local CI checks before push
 
-Before `git push`, run these from `proxy-server/` and fix any failures:
+Before `git push`, run these from this directory and fix any failures:
 
 ```powershell
-cd proxy-server
 gofmt -l .                  # must print nothing
 go vet ./...
 go build ./...
