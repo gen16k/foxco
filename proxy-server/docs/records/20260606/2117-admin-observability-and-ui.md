@@ -1,4 +1,4 @@
-# 管理UI向け観測レイヤ（opt-in 生プロンプト保存 + admin API + Next.js ダッシュボード） (20260606 21:17) #pending
+# 管理UI向け観測レイヤ（opt-in 生プロンプト保存 + admin API + Next.js ダッシュボード） (20260606 21:17) #1be61f4
 
 ## Motivation
 

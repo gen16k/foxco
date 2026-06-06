@@ -1,4 +1,4 @@
-# Grafana 風 管理ダッシュボード（Next.js）実装 + E2E 検証 (20260606 21:52) #pending
+# Grafana 風 管理ダッシュボード（Next.js）実装 + E2E 検証 (20260606 21:52) #4c5233d
 
 ## Motivation
 
