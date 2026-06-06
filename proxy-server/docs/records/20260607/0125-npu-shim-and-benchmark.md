@@ -1,4 +1,4 @@
-# LFM2-NPU を自作 Ryzen AI ONNX シムで実装 + 3 経路ベンチ記録 (20260607 01:25) #pending
+# LFM2-NPU を自作 Ryzen AI ONNX シムで実装 + 3 経路ベンチ記録 (20260607 01:25) #914dc35
 
 ## Motivation
 

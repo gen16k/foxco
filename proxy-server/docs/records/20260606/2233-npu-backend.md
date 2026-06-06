@@ -1,4 +1,4 @@
-# AMD NPU(XDNA2) バックエンド追加 — NPU 優先 + 自動フォールバック (20260606 22:33) #pending
+# AMD NPU(XDNA2) バックエンド追加 — NPU 優先 + 自動フォールバック (20260606 22:33) #914dc35
 
 > **刷新 (20260607 01:25)**: 本 record は「Lemonade Server(OGA) で LFM2 を NPU 実行」前提だったが、
 > Lemonade(OGA) は LFM2 を実行できないと判明。実装は **自作 Ryzen AI ONNX シム**に刷新した。
