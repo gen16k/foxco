@@ -10,19 +10,24 @@ This is primarily a **showcase for on-device LFM classification**: the LFM is th
 primary NG/OK classifier, with a small deterministic rule guardrail as insurance.
 
 > **Threat model — read this first.** This is an *advisory* control for the
-> honest-mistake case (a developer accidentally pasting a secret). It runs as a
-> per-user localhost proxy selected via `ANTHROPIC_BASE_URL`, so it is **not** a
-> tamper-proof enforcement boundary: a user who unsets the env var or stops the
-> process bypasses it. Real enforcement requires a network egress chokepoint
-> (forward proxy / firewall) the user cannot disable. See `docs/spec-proxy.md`.
+> honest-mistake case (a developer accidentally pasting a secret). By default it
+> runs in **transparent mode**: a Windows service redirects `api.anthropic.com`
+> via the hosts file and terminates TLS with a locally-trusted CA, so no
+> `ANTHROPIC_BASE_URL` is needed and casual bypass is harder than the env-var
+> mode. It is still **not** a tamper-proof enforcement boundary — a user with
+> Administrator rights can stop the service, remove the hosts entry, or uninstall
+> the CA. Real enforcement requires a network egress chokepoint (forward proxy /
+> firewall) the user cannot disable. See `docs/spec-proxy.md` §5.
 
 ## How it works
 
 ```
-Claude Code --(ANTHROPIC_BASE_URL=http://127.0.0.1:8787)--> Proxy
+Claude Code --(transparent: hosts api.anthropic.com->127.0.0.1, TLS :443 via local CA)--> Proxy
+            --(or legacy: ANTHROPIC_BASE_URL=http://127.0.0.1:8787)-----------------------> Proxy
   parse  -> normalize -> segment -> [cache] -> rule guardrail -> LFM (NG/OK)
          -> BLOCK (assistant message / SSE, no egress)          (live turn NG)
          -> sanitize history (remove sensitive tool/turn units) -> forward upstream
+              (upstream resolved via external DNS so the redirect doesn't loop back)
 ```
 
 - **Binary classifier.** The LFM returns `{reason, decision: ALLOW|BLOCK}`;
@@ -99,7 +104,27 @@ If more than one Vulkan device shows up, pin the iGPU with
 `docs/spec-proxy.md` §8.5). To manage the sidecar yourself, start `llama-server`
 separately and run `.\start.ps1 -NoSidecar`.
 
-Then point Claude Code at the proxy:
+### Connect Claude Code
+
+**Transparent mode (default).** No `ANTHROPIC_BASE_URL` needed — a Windows service
+redirects `api.anthropic.com` to the proxy and terminates TLS with a locally-trusted
+CA. One-time setup, from an **elevated** PowerShell in this directory:
+
+```powershell
+.\install.ps1          # builds, installs the CA, registers the service + sidecar logon task
+```
+
+`install.ps1` does **not** start the service immediately (so it won't disturb a
+running Claude session). The redirect activates on next boot/logon, or start it now:
+
+```powershell
+.\proxyctl.ps1 start   # start sidecar (your session) + service (redirect + :443)
+.\proxyctl.ps1 status  # service / sidecar / redirect state
+.\uninstall.ps1        # revert everything (elevated)
+```
+
+**Legacy proxy mode (fallback).** Set `mode: proxy` in the config and point Claude
+Code at the plain-HTTP listener:
 
 ```powershell
 $env:ANTHROPIC_BASE_URL = "http://127.0.0.1:8787"   # no /v1 suffix
@@ -110,14 +135,17 @@ claude
 
 | Path | Responsibility |
 |------|----------------|
-| `cmd/proxy` | entrypoint, config + classifier wiring, HTTP server |
-| `internal/proxy` | request flow handler (parse → evaluate → sanitize → forward) |
+| `cmd/proxy` | entrypoint, config + classifier wiring, dual listeners, Windows service |
+| `internal/proxy` | request flow handler (parse → evaluate → sanitize → forward) + passthrough |
 | `internal/anthropic` | Messages API types (round-trip safe), block response, SSE, forwarder |
 | `internal/dlp` | normalize, segment, rule guardrail, cache, LFM detector/policy |
 | `internal/inference` | llama.cpp client (LFM) + keyword fallback classifier |
 | `internal/sanitizer` | structure-aware history unit removal + validation |
 | `internal/storage` | SQLite audit log (no raw text / secrets) |
 | `internal/config` | YAML config + safe defaults |
+| `internal/mitm` | Name-Constrained root CA + on-the-fly leaf certs (transparent TLS) |
+| `internal/upstreamdial` | hosts-bypassing transport so the upstream forward reaches the real API |
+| `internal/hostsfile` | crash-safe hosts-file redirect block (add on start / remove on stop) |
 
 Configuration: see `config/config.example.yaml`. Full design: `docs/spec-proxy.md`
 and the implementation plan it links to.

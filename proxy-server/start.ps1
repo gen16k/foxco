@@ -1,12 +1,20 @@
-# Local LFM DLP Proxy — PoC one-command launcher.
+# Local LFM DLP Proxy — sidecar + proxy launcher.
 #
-# Starts the local LFM sidecar (llama.cpp `llama-server`) AND the proxy in one
-# command. Target hardware is the AMD Ryzen 5 350 APU; no NVIDIA/CUDA required.
+# Starts the local LFM sidecar (llama.cpp `llama-server`) AND (optionally) the
+# proxy. Target hardware is the AMD Ryzen 5 350 APU; no NVIDIA/CUDA required.
 #
-#   .\start.ps1                       # iGPU (Vulkan) sidecar + proxy   (default)
+#   .\start.ps1                       # iGPU (Vulkan) sidecar + proxy   (default, legacy dev)
 #   .\start.ps1 -Backend cpu          # CPU sidecar + proxy             (fallback)
 #   .\start.ps1 -Classifier keyword   # no model: deterministic keyword fallback
 #   .\start.ps1 -NoSidecar            # proxy only (sidecar already running)
+#   .\start.ps1 -SidecarOnly          # sidecar only, stay running (used by the logon task)
+#
+# SERVICE MODEL: in transparent mode the proxy runs as a Windows service (see
+# install.ps1), and the GPU-bound sidecar must run in the *user session* (a
+# Session-0 service cannot reach the iGPU). The install-registered logon task runs
+# this script with -SidecarOnly so the sidecar keeps the iGPU and the service
+# connects to it at 127.0.0.1:8791. Use the legacy (no -SidecarOnly) form only for
+# console/dev runs of the proxy in "proxy" (env-var) mode.
 #
 # GPU acceleration uses the **Vulkan** build of llama.cpp on the integrated
 # Radeon (RDNA 3.5). ROCm does not support AMD iGPUs on Windows, so Vulkan is the
@@ -30,15 +38,21 @@ param(
     [string]$LlamaHost = "127.0.0.1",
     [int]$LlamaPort = 8791,                     # must match inference.endpoint in config
     [int]$HealthTimeoutSec = 600,              # first run downloads the GGUF + compiles Vulkan shaders
-    [switch]$NoSidecar
+    [switch]$NoSidecar,
+    [switch]$SidecarOnly                       # start the sidecar and stay running; do not run the proxy
 )
 
 $ErrorActionPreference = "Stop"
 
-# Build the proxy if the binary is missing.
-if (-not (Test-Path ".\proxy.exe")) {
+# Build the proxy if the binary is missing (not needed in sidecar-only mode — the
+# service owns proxy.exe there).
+if (-not $SidecarOnly -and -not (Test-Path ".\proxy.exe")) {
     Write-Host "Building proxy.exe..."
     go build -o proxy.exe .\cmd\proxy
+}
+
+if ($SidecarOnly -and $NoSidecar) {
+    throw "-SidecarOnly and -NoSidecar are mutually exclusive."
 }
 
 # The keyword classifier needs no model, so never start a sidecar for it.
@@ -92,6 +106,24 @@ if ($useSidecar) {
         }
         Write-Host "LFM sidecar is healthy."
     }
+}
+
+# Sidecar-only mode (logon task): keep this process alive for the sidecar's
+# lifetime so the Scheduled Task represents the sidecar and can stop it. The
+# proxy runs separately as a Windows service.
+if ($SidecarOnly) {
+    if ($sidecar) {
+        Write-Host "Sidecar running (pid $($sidecar.Id)); holding session. Ctrl-C or ending the task stops it."
+        try {
+            Wait-Process -Id $sidecar.Id
+        }
+        finally {
+            if (-not $sidecar.HasExited) { Stop-Process -Id $sidecar.Id -Force -ErrorAction SilentlyContinue }
+        }
+    } else {
+        Write-Host "Sidecar already running elsewhere; nothing to hold. Exiting."
+    }
+    return
 }
 
 $proxyArgs = @("-config", $Config)

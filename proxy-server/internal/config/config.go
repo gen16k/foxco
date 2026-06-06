@@ -7,27 +7,55 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
+	// Mode selects how clients reach the proxy:
+	//   transparent — hosts-file redirect + HTTPS interception on intercept.https_listen_addr (default)
+	//   proxy       — legacy env-var mode (ANTHROPIC_BASE_URL -> server.listen_addr, plain HTTP)
+	//   both        — run both listeners simultaneously
+	Mode      string    `yaml:"mode"`
 	Server    Server    `yaml:"server"`
+	Intercept Intercept `yaml:"intercept"`
+	TLS       TLS       `yaml:"tls"`
 	Upstream  Upstream  `yaml:"upstream"`
 	DLP       DLP       `yaml:"dlp"`
 	Inference Inference `yaml:"inference"`
 	Cache     Cache     `yaml:"cache"`
 	Storage   Storage   `yaml:"storage"`
 	Logging   Logging   `yaml:"logging"`
+	Service   Service   `yaml:"service"`
 }
 
 type Server struct {
 	ListenAddr string `yaml:"listen_addr"`
 }
 
+// Intercept configures transparent HTTPS interception: which hostnames are
+// redirected to the proxy via the hosts file and where the TLS listener binds.
+type Intercept struct {
+	Hosts           []string `yaml:"hosts"`
+	HTTPSListenAddr string   `yaml:"https_listen_addr"`
+	ManageHostsFile bool     `yaml:"manage_hosts_file"`
+}
+
+// TLS configures the proxy-issued root CA used to mint per-host leaf
+// certificates for the intercepted hosts.
+type TLS struct {
+	CACertPath      string   `yaml:"ca_cert_path"`
+	CAKeyPath       string   `yaml:"ca_key_path"`
+	NameConstraints []string `yaml:"name_constraints"`
+}
+
 type Upstream struct {
-	BaseURL   string `yaml:"base_url"`
-	TimeoutMS int    `yaml:"timeout_ms"`
+	BaseURL string `yaml:"base_url"`
+	// ResolverDNS is the external DNS server (host:port) used to resolve the
+	// real upstream, bypassing the hosts file the proxy itself installs.
+	ResolverDNS string `yaml:"resolver_dns"`
+	TimeoutMS   int    `yaml:"timeout_ms"`
 }
 
 type DLP struct {
@@ -67,15 +95,34 @@ type Storage struct {
 type Logging struct {
 	Level                 string `yaml:"level"`
 	RedactSensitiveValues bool   `yaml:"redact_sensitive_values"`
+	// File, when set, directs logs to a file instead of stdout. Used when the
+	// proxy runs as a Windows service (no console). Empty keeps stdout.
+	File string `yaml:"file"`
+}
+
+type Service struct {
+	Name string `yaml:"name"`
 }
 
 // Default returns a configuration with the agreed safe defaults.
 func Default() Config {
-	return Config{
+	cfg := Config{
+		Mode:   "transparent",
 		Server: Server{ListenAddr: "127.0.0.1:8787"},
+		Intercept: Intercept{
+			Hosts:           []string{"api.anthropic.com"},
+			HTTPSListenAddr: "127.0.0.1:443",
+			ManageHostsFile: true,
+		},
+		TLS: TLS{
+			CACertPath:      `%ProgramData%\LocalLfmDlpProxy\ca\ca.crt`,
+			CAKeyPath:       `%ProgramData%\LocalLfmDlpProxy\ca\ca.key`,
+			NameConstraints: []string{"anthropic.com"},
+		},
 		Upstream: Upstream{
-			BaseURL:   "https://api.anthropic.com",
-			TimeoutMS: 60000,
+			BaseURL:     "https://api.anthropic.com",
+			ResolverDNS: "1.1.1.1:53",
+			TimeoutMS:   60000,
 		},
 		DLP: DLP{
 			FailClosed: true,
@@ -97,67 +144,89 @@ func Default() Config {
 		},
 		Cache: Cache{Enabled: true, MaxEntries: 4096, PersistSQLite: false},
 		Storage: Storage{
-			Type:          "sqlite",
-			Path:          expandLocal(`%LOCALAPPDATA%\LocalLfmDlpProxy\state\dlp.db`),
+			Type: "sqlite",
+			// Under the Windows service (LocalSystem) %LOCALAPPDATA% resolves to
+			// the systemprofile; use the machine-wide %ProgramData% tree instead.
+			Path:          `%ProgramData%\LocalLfmDlpProxy\state\dlp.db`,
 			StoreRawText:  false,
 			RetentionDays: 30,
 		},
 		Logging: Logging{Level: "info", RedactSensitiveValues: true},
+		Service: Service{Name: "LocalLfmDlpProxy"},
 	}
+	cfg.expandPaths()
+	return cfg
 }
 
 // Load reads a YAML config file over the defaults. A missing path returns the
 // defaults unchanged.
 func Load(path string) (Config, error) {
 	cfg := Default()
-	if path == "" {
-		return cfg, nil
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return cfg, nil
+	if path != "" {
+		data, err := os.ReadFile(path)
+		switch {
+		case err == nil:
+			if err := yaml.Unmarshal(data, &cfg); err != nil {
+				return cfg, fmt.Errorf("parse config: %w", err)
+			}
+		case os.IsNotExist(err):
+			// fall through with defaults
+		default:
+			return cfg, fmt.Errorf("read config: %w", err)
 		}
-		return cfg, fmt.Errorf("read config: %w", err)
 	}
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return cfg, fmt.Errorf("parse config: %w", err)
-	}
-	cfg.Storage.Path = expandLocal(cfg.Storage.Path)
+	cfg.expandPaths()
 	return cfg, nil
 }
 
-// expandLocal expands %LOCALAPPDATA% (and other env vars) in a Windows path.
+// expandPaths expands Windows %VAR% tokens in every filesystem-path field.
+// It is idempotent (no-op once tokens are resolved), so calling it from both
+// Default and Load is safe.
+func (c *Config) expandPaths() {
+	c.Storage.Path = expandLocal(c.Storage.Path)
+	c.TLS.CACertPath = expandLocal(c.TLS.CACertPath)
+	c.TLS.CAKeyPath = expandLocal(c.TLS.CAKeyPath)
+	c.Logging.File = expandLocal(c.Logging.File)
+	c.Inference.SystemPromptFile = expandLocal(c.Inference.SystemPromptFile)
+}
+
+// expandLocal expands Windows-style %VAR% references (e.g. %ProgramData%,
+// %LOCALAPPDATA%) using the process environment, then cleans the path. Unknown
+// variables are left intact. An empty input returns empty.
 func expandLocal(p string) string {
 	if p == "" {
 		return p
 	}
-	expanded := os.Expand(p, func(key string) string { return os.Getenv(key) })
-	// os.Expand uses $VAR / ${VAR}; handle %VAR% (Windows style) explicitly.
-	if local := os.Getenv("LOCALAPPDATA"); local != "" {
-		expanded = replacePercent(expanded, "LOCALAPPDATA", local)
-	}
-	return filepath.Clean(expanded)
+	return filepath.Clean(expandPercent(p))
 }
 
-func replacePercent(s, key, val string) string {
-	token := "%" + key + "%"
-	out := ""
-	for {
-		i := indexOf(s, token)
-		if i < 0 {
-			return out + s
+// expandPercent replaces %NAME% tokens with os.Getenv(NAME). %% is a literal %.
+// A token whose variable is unset (or empty) is left verbatim.
+func expandPercent(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		if s[i] != '%' {
+			b.WriteByte(s[i])
+			i++
+			continue
 		}
-		out += s[:i] + val
-		s = s[i+len(token):]
-	}
-}
-
-func indexOf(s, sub string) int {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return i
+		end := strings.IndexByte(s[i+1:], '%')
+		if end < 0 { // no closing %, emit the rest verbatim
+			b.WriteString(s[i:])
+			break
 		}
+		name := s[i+1 : i+1+end]
+		if name == "" { // "%%" -> literal "%"
+			b.WriteByte('%')
+			i += 2
+			continue
+		}
+		if val := os.Getenv(name); val != "" {
+			b.WriteString(val)
+		} else {
+			b.WriteString("%" + name + "%") // unknown: leave intact
+		}
+		i += end + 2
 	}
-	return -1
+	return b.String()
 }
