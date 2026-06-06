@@ -12,7 +12,10 @@ between **Claude Code** and the Anthropic API, inspects every outbound request, 
 asks a local **LFM** (Liquid Foundation Model, LFM2.5-1.2B via a llama.cpp sidecar)
 whether the content is safe to send. Sensitive egress is **blocked**; once-blocked
 history is sanitized so it never leaks on a later turn. Written in Go (module
-`local-lfm-dlp-proxy`), targets Windows / AMD Ryzen AI.
+`local-lfm-dlp-proxy`); the target is Windows on an **AMD Ryzen AI series APU**
+(RDNA 3.5 integrated Radeon iGPU + XDNA2 NPU; e.g. Ryzen AI MAX+ 395 / Ryzen 5
+350), with LFM inference on the integrated Radeon iGPU via the **Vulkan** build of
+llama.cpp (CPU fallback). No NVIDIA/CUDA is used.
 
 * The repo-wide FoxCo overview is the root `../README.md`; this subtree's overview
   is `README.md`.
@@ -24,15 +27,25 @@ history is sanitized so it never leaks on a later turn. Written in Go (module
 Run from this directory (the Go module root):
 
 ```powershell
+# One-time: install a Vulkan-enabled llama.cpp (winget ships the Windows Vulkan
+# build that offloads to the integrated Radeon). Open a new terminal afterwards.
+winget install ggml.llamacpp
+
 go build -o proxy.exe ./cmd/proxy
 go test ./...
 
-# Run with the real LFM via a llama.cpp sidecar (auto-downloads the GGUF):
-llama-server -hf LiquidAI/LFM2.5-1.2B-Instruct-GGUF:Q4_K_M --host 127.0.0.1 --port 8791 --jinja
-.\start.ps1
+# One-command launch: start.ps1 starts the llama.cpp sidecar (auto-downloads the
+# GGUF), waits for /health, then starts the proxy. Default backend is the AMD iGPU
+# via Vulkan (-ngl 99); ROCm does not support AMD iGPUs on Windows.
+.\start.ps1                 # iGPU (Vulkan) sidecar + proxy
+.\start.ps1 -Backend cpu    # CPU sidecar + proxy (fallback)
 
 # Or run without a model (deterministic keyword fallback, for dev/CI/demo):
 .\start.ps1 -Classifier keyword
+
+# Manage the sidecar yourself, then run the proxy only:
+llama-server -hf LiquidAI/LFM2.5-1.2B-Instruct-GGUF:Q4_K_M --host 127.0.0.1 --port 8791 --jinja -ngl 99
+.\start.ps1 -NoSidecar
 
 # Point Claude Code at the proxy (note: no /v1 suffix):
 $env:ANTHROPIC_BASE_URL = "http://127.0.0.1:8787"

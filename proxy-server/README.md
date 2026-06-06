@@ -56,14 +56,48 @@ go test ./...
 
 ## Run (PoC)
 
+Target hardware is an **AMD Ryzen AI series APU** (RDNA 3.5 integrated Radeon iGPU
++ XDNA2 NPU; e.g. Ryzen AI MAX+ 395 / Ryzen 5 350); no NVIDIA/CUDA is required.
+
+### Setup (one-time)
+
+The LFM runs in a llama.cpp `llama-server` sidecar. Install a **Vulkan**-enabled
+build — the official winget package ships the Windows Vulkan binary, which offloads
+onto the integrated Radeon:
+
 ```powershell
-# Option A: with the real LFM via a llama.cpp sidecar (LFM2.5 GGUF, auto-downloaded)
-llama-server -hf LiquidAI/LFM2.5-1.2B-Instruct-GGUF:Q4_K_M --host 127.0.0.1 --port 8791 --jinja
+winget install ggml.llamacpp
+# Pulls llama-b####-bin-win-vulkan-x64.zip and the VC++ Redistributable dependency.
+# Open a NEW terminal afterwards so PATH picks up llama-server, then sanity-check:
+llama-server --version
+llama-server --list-devices      # the Radeon iGPU should show up as a Vulkan device
+```
+
+The Vulkan runtime ships with the AMD Adrenalin graphics driver (`vulkan-1.dll`);
+only if it is missing, add it with `winget install KhronosGroup.VulkanRT`. ROCm is
+**not** used — it does not support AMD iGPUs on Windows, so Vulkan is the path.
+
+### Launch
+
+`start.ps1` is a one-command launcher: it starts the sidecar, waits for it to become
+healthy, then starts the proxy.
+
+```powershell
+# Option A: real LFM on the integrated Radeon iGPU via Vulkan (LFM2.5 GGUF,
+# auto-downloaded on first run). This is the default backend.
 .\start.ps1
 
-# Option B: no model yet — deterministic keyword fallback (dev/demo)
+# Same, but keep inference on the CPU (always-works fallback)
+.\start.ps1 -Backend cpu
+
+# Option B: no model yet — deterministic keyword fallback (dev/demo, no sidecar)
 .\start.ps1 -Classifier keyword
 ```
+
+If more than one Vulkan device shows up, pin the iGPU with
+`$env:GGML_VK_VISIBLE_DEVICES=0`. NPU (XDNA2) execution is future scope (see
+`docs/spec-proxy.md` §8.5). To manage the sidecar yourself, start `llama-server`
+separately and run `.\start.ps1 -NoSidecar`.
 
 Then point Claude Code at the proxy:
 
