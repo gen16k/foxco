@@ -1,5 +1,34 @@
 # TODO / Deferred Issues
 
+## 抽出プロファイルのブロック対象カテゴリを構成可能にする
+
+- Status: Open
+- Discovered: 20260607 (docs/records/20260607/0138-jp-confidential-extraction-profile.md)
+
+### Detail
+
+`jp_confidential_extraction` は 11 カテゴリのいずれか非空で BLOCK する faithful な既定。だが
+`human_name` / `company_name` / `address` は一般的なエンジニアリング文・公開情報にも現れ、
+`reason_decision` 比で誤検知（過剰ブロック）が増えうる。現状トリガ集合は profile.go の定数
+スライス `jpExtractionSensitiveCategories` で構成不可。
+
+### Why deferred / Blocked by
+
+FT モデル自体が未配備で実運用の誤検知傾向が未測定。まず faithful 既定で配備し、観測後に
+`inference.extraction_block_categories`（既定=全11）でサブセット指定できるようにするのが妥当。
+
+## 抽出プロファイルの max_tokens 上書きとプロファイル切替時のキャッシュ陳腐化
+
+- Status: Open
+- Discovered: 20260607 (docs/records/20260607/0138-jp-confidential-extraction-profile.md)
+
+### Detail
+
+(1) `max_tokens` はプロファイル付随（抽出=384）で `inference.max_tokens` の上書きは未提供。密な
+入力で 384 でも切れるなら 512 へ引き上げが要る。(2) `cache.persist_sqlite=true` でプロファイルを
+跨いで再起動すると、指紋→判定キャッシュが旧プロファイルの判定を返し得る（プロファイル名を
+キャッシュキー/名前空間に含めていない）。本変更では未対応。
+
 ## 透過モード(:443のみ)だと admin UI が admin API に到達できない
 
 - Status: Open

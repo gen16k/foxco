@@ -61,6 +61,8 @@ dlp:
   rule_guardrail:
     # Deterministic secret/API-key guardrail. The LFM remains the primary
     # classifier; this is the insurance layer for blatant credential leaks.
+    # Set to false for an LFM-only pipeline (the model becomes the sole
+    # classifier); true keeps both layers (recommended in production).
     enabled: true
 
 inference:
@@ -75,8 +77,15 @@ inference:
   warmup_on_start: true
   health_timeout_ms: 500
   # LFM I/O contract (prompt + schema + output parsing). Swap this when a
-  # fine-tuned model expects a different format. Built-ins: "reason_decision"
-  # (default), "ng_boolean". Register more in internal/inference/profile.go.
+  # fine-tuned model expects a different format. Built-ins:
+  #   reason_decision (default) — {"reason","decision":ALLOW|BLOCK} classifier.
+  #   ng_boolean                — {"ng","short_reason"} boolean classifier.
+  #   jp_confidential_extraction — for a model fine-tuned on
+  #     akiFQC/japanese-confidential-information-extraction-sft: an 11-category
+  #     Japanese entity-EXTRACTION model (plain-text input, JSON entity-list
+  #     output); any non-empty category => BLOCK. Requires that fine-tuned
+  #     checkpoint loaded in the sidecar — set `model` to it before selecting.
+  # Register more in internal/inference/profile.go.
   profile: "reason_decision"
   # Optional: override just the profile's system prompt from a file (handy while
   # iterating on a fine-tuned model without rebuilding).

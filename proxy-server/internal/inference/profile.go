@@ -22,6 +22,11 @@ type PromptProfile struct {
 	Schema    json.RawMessage
 	BuildUser func(in dlp.ClassifyInput) string
 	Parse     func(content string) (dlp.ClassifyOutput, error)
+	// MaxTokens caps the model's reply length for this profile. 0 means "use the
+	// client default". A binary verdict needs only a few tokens, but an extraction
+	// contract must emit a full multi-key JSON object, so it sets this higher to
+	// avoid truncation (truncated JSON fails to parse and then fails closed).
+	MaxTokens int
 }
 
 // DefaultProfileName is used when config selects no profile.
@@ -45,6 +50,7 @@ func DefaultProfile() PromptProfile { return profiles[DefaultProfileName] }
 func init() {
 	RegisterProfile(reasonDecisionProfile())
 	RegisterProfile(ngBooleanProfile())
+	RegisterProfile(jpConfidentialExtractionProfile())
 }
 
 // defaultBuildUser renders a segment as inert, clearly-delimited DATA. The
@@ -193,4 +199,122 @@ func parseNGBoolean(content string) (dlp.ClassifyOutput, error) {
 		return dlp.ClassifyOutput{}, fmt.Errorf("parse verdict: %w", err)
 	}
 	return out, nil
+}
+
+// ---------------------------------------------------------------------------
+// jp_confidential_extraction — contract for a model fine-tuned on
+// akiFQC/japanese-confidential-information-extraction-sft. Unlike the classifier
+// profiles above, this model does NOT emit an ALLOW/BLOCK verdict: it performs
+// 11-category named-entity EXTRACTION and returns a JSON object whose keys are
+// the categories and whose values are arrays of the extracted strings. The
+// proxy derives the binary verdict here: any non-empty category => BLOCK.
+//
+// Two deliberate departures from the default contract, both required to match
+// the model's training distribution:
+//   - BuildUser sends the raw text with NO <<<DATA>>> wrapper and NO segment_type
+//     hint (the model never saw them). This weakens the "treat inspected text as
+//     inert data" invariant; it is acceptable here because an extraction model has
+//     no verdict field for an injection to flip — the worst case is a missed
+//     entity (false negative), which the deterministic rule guardrail and
+//     fail-closed still backstop. Confirmed with the user; see docs/decisions.md.
+//   - System is the dataset's Japanese instruction, byte-exact (a 1.2B model is
+//     sensitive to full/half-width punctuation and newlines). Pin the deployed
+//     checkpoint's exact prompt via inference.system_prompt_file if it drifts.
+// ---------------------------------------------------------------------------
+
+func jpConfidentialExtractionProfile() PromptProfile {
+	return PromptProfile{
+		Name:      "jp_confidential_extraction",
+		System:    jpConfidentialExtractionSystem,
+		Schema:    jpConfidentialExtractionSchema,
+		BuildUser: jpExtractionBuildUser,
+		Parse:     parseJPConfidentialExtraction,
+		// The full 11-key object (template alone is ~90-120 tokens) plus the
+		// extracted values needs far more room than a binary verdict's 128.
+		MaxTokens: 384,
+	}
+}
+
+// jpExtractionSensitiveCategories is the set of categories whose presence makes a
+// segment NG, in a stable order so the reason string is deterministic. All 11
+// categories are confidential (社外秘) per the dataset, so any of them triggers a
+// block. Factored out so narrowing the trigger set later is a one-line change.
+var jpExtractionSensitiveCategories = []string{
+	"address", "company_name", "email_address", "human_name", "phone_number",
+	"account_identifier", "network_identifier", "system_config", "project_info",
+	"financial_info", "transaction_id",
+}
+
+// jpExtractionBuildUser sends the raw segment text verbatim — matching the
+// dataset's user turn (plain text, no delimiters, no metadata). See the profile
+// comment for why the inert-data wrapper is intentionally omitted here.
+func jpExtractionBuildUser(in dlp.ClassifyInput) string { return in.Text }
+
+// jpConfidentialExtractionSystem is the dataset's system prompt, copied byte-exact
+// from akiFQC/japanese-confidential-information-extraction-sft (constant across all
+// rows). Do not reword: the fine-tuned model is conditioned on these exact bytes.
+const jpConfidentialExtractionSystem = `あなたはテキストから社外秘の固有表現を抽出するアシスタントです。入力テキストを分析し、以下の11カテゴリの機密情報を抽出して、必ずJSON形式のみで出力してください。
+
+カテゴリ定義:
+- address: 住所・所在地
+- company_name: 企業・研究機関・組織名
+- email_address: メールアドレス
+- human_name: 人名
+- phone_number: 電話番号
+- account_identifier: アカウント識別子（ユーザーID・アカウント名・従業員番号・社会保障番号・マイナンバー等）
+- network_identifier: ネットワーク識別情報（IPアドレス・MACアドレス・内部ドメイン・ホスト名）
+- system_config: システム構成情報（ファイルパス・ディレクトリ構造・DBテーブル/カラム名）
+- project_info: プロジェクト関連情報（プロジェクト名・開発コードネーム・未発表の製品/機能名）
+- financial_info: 金額・財務情報（売上・原価・利益率・契約金額・個人の給与/報酬額）
+- transaction_id: 取引管理番号（契約書番号・請求書番号・見積書番号・顧客管理ID）
+
+出力形式（全キーを必ず含め、該当なしは空リスト）:
+{"address": [], "company_name": [], "email_address": [], "human_name": [], "phone_number": [], "account_identifier": [], "network_identifier": [], "system_config": [], "project_info": [], "financial_info": [], "transaction_id": []}`
+
+var jpConfidentialExtractionSchema = json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "address": {"type": "array", "items": {"type": "string"}},
+    "company_name": {"type": "array", "items": {"type": "string"}},
+    "email_address": {"type": "array", "items": {"type": "string"}},
+    "human_name": {"type": "array", "items": {"type": "string"}},
+    "phone_number": {"type": "array", "items": {"type": "string"}},
+    "account_identifier": {"type": "array", "items": {"type": "string"}},
+    "network_identifier": {"type": "array", "items": {"type": "string"}},
+    "system_config": {"type": "array", "items": {"type": "string"}},
+    "project_info": {"type": "array", "items": {"type": "string"}},
+    "financial_info": {"type": "array", "items": {"type": "string"}},
+    "transaction_id": {"type": "array", "items": {"type": "string"}}
+  },
+  "required": ["address", "company_name", "email_address", "human_name", "phone_number", "account_identifier", "network_identifier", "system_config", "project_info", "financial_info", "transaction_id"],
+  "additionalProperties": false
+}`)
+
+// parseJPConfidentialExtraction maps the extraction JSON onto the binary verdict.
+// It decodes into a map (not a fixed struct) so missing/unknown keys are harmless:
+// a missing or null category is simply empty and does not fire. Any non-empty
+// sensitive category makes the segment NG. A complete unmarshal failure (e.g.
+// truncated or non-JSON output) returns an error so the caller fails closed.
+//
+// Invariant: ShortReason is built ONLY from category names, never from the
+// extracted values — it flows into the block message and the audit log, which
+// must never contain the sensitive value.
+func parseJPConfidentialExtraction(content string) (dlp.ClassifyOutput, error) {
+	var m map[string][]string
+	if err := json.Unmarshal([]byte(extractJSON(content)), &m); err != nil {
+		return dlp.ClassifyOutput{}, fmt.Errorf("parse extraction verdict: %q", truncate(content, 80))
+	}
+	var fired []string
+	for _, cat := range jpExtractionSensitiveCategories {
+		if len(m[cat]) > 0 {
+			fired = append(fired, cat)
+		}
+	}
+	if len(fired) == 0 {
+		return dlp.ClassifyOutput{NG: false}, nil
+	}
+	return dlp.ClassifyOutput{
+		NG:          true,
+		ShortReason: truncate("confidential entities: "+strings.Join(fired, ", "), 120),
+	}, nil
 }
