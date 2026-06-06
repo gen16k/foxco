@@ -25,3 +25,6 @@ proxy-server/web/out/
 proxy-server/web/.env.local
 proxy-server/web/next-env.d.ts
 proxy-server/web/tsconfig.tsbuildinfo
+
+.env
+wandb/
