@@ -1,20 +1,25 @@
 # Local LFM DLP Proxy — sidecar + proxy launcher.
 #
-# Starts the local LFM sidecar (llama.cpp `llama-server`) AND (optionally) the
-# proxy. Target hardware is the AMD Ryzen 5 350 APU; no NVIDIA/CUDA required.
+# Starts the local LFM sidecar (llama.cpp `llama-server`), the proxy, AND the admin
+# web UI (Next.js, localhost only). Target hardware is the AMD Ryzen 5 350 APU; no
+# NVIDIA/CUDA required.
 #
-#   .\start.ps1                       # iGPU (Vulkan) sidecar + proxy   (default, legacy dev)
-#   .\start.ps1 -Backend cpu          # CPU sidecar + proxy             (fallback)
+#   .\start.ps1                       # iGPU (Vulkan) sidecar + proxy + admin UI
+#   .\start.ps1 -Backend cpu          # CPU sidecar + proxy + admin UI  (fallback)
 #   .\start.ps1 -Classifier keyword   # no model: deterministic keyword fallback
-#   .\start.ps1 -NoSidecar            # proxy only (sidecar already running)
-#   .\start.ps1 -SidecarOnly          # sidecar only, stay running (used by the logon task)
+#   .\start.ps1 -NoSidecar            # proxy + admin UI only (sidecar elsewhere)
+#   .\start.ps1 -NoWeb                # proxy (and sidecar) only, no admin UI
+#   .\start.ps1 -SidecarOnly          # sidecar only, stay running (logon task; no proxy/UI)
+#
+# The admin UI starts on http://127.0.0.1:3939 (loopback only). It reads the proxy's
+# admin API; this script passes the API address + admin.auth_token from the chosen
+# config to the UI automatically so they match. Ctrl+C stops everything.
 #
 # SERVICE MODEL: in transparent mode the proxy runs as a Windows service (see
-# install.ps1), and the GPU-bound sidecar must run in the *user session* (a
-# Session-0 service cannot reach the iGPU). The install-registered logon task runs
-# this script with -SidecarOnly so the sidecar keeps the iGPU and the service
-# connects to it at 127.0.0.1:8791. Use the legacy (no -SidecarOnly) form only for
-# console/dev runs of the proxy in "proxy" (env-var) mode.
+# install.ps1), and the GPU-bound sidecar must run in the *user session* (a Session-0
+# service cannot reach the iGPU). The install-registered logon task runs this script
+# with -SidecarOnly so the sidecar keeps the iGPU and the service connects to it at
+# 127.0.0.1:8791. Use the non-SidecarOnly form for console/dev runs (proxy + UI).
 #
 # GPU acceleration uses the **Vulkan** build of llama.cpp on the integrated
 # Radeon (RDNA 3.5). ROCm does not support AMD iGPUs on Windows, so Vulkan is the
@@ -39,7 +44,8 @@ param(
     [int]$LlamaPort = 8791,                     # must match inference.endpoint in config
     [int]$HealthTimeoutSec = 600,              # first run downloads the GGUF + compiles Vulkan shaders
     [switch]$NoSidecar,
-    [switch]$SidecarOnly                       # start the sidecar and stay running; do not run the proxy
+    [switch]$SidecarOnly,                      # start the sidecar and stay running; do not run the proxy/UI (logon task)
+    [switch]$NoWeb                             # skip launching the admin web UI
 )
 
 $ErrorActionPreference = "Stop"
@@ -109,8 +115,8 @@ if ($useSidecar) {
 }
 
 # Sidecar-only mode (logon task): keep this process alive for the sidecar's
-# lifetime so the Scheduled Task represents the sidecar and can stop it. The
-# proxy runs separately as a Windows service.
+# lifetime so the Scheduled Task represents the sidecar and can stop it. The proxy
+# runs separately as a Windows service; no proxy or admin UI is started here.
 if ($SidecarOnly) {
     if ($sidecar) {
         Write-Host "Sidecar running (pid $($sidecar.Id)); holding session. Ctrl-C or ending the task stops it."
@@ -126,14 +132,46 @@ if ($SidecarOnly) {
     return
 }
 
+# Start the admin web UI (Next.js) on localhost, unless suppressed. It is bound to
+# 127.0.0.1 (see web/package.json) so it is reachable only from this machine. We
+# pass the admin API address + token parsed from the chosen config so the UI talks
+# to this proxy without extra setup.
+$web = $null
+if (-not $NoWeb) {
+    $webDir = Join-Path $PSScriptRoot "web"
+    try {
+        if (-not (Test-Path (Join-Path $webDir "node_modules"))) {
+            Write-Host "Installing admin UI dependencies (first run; this can take a minute)..."
+            Push-Location $webDir
+            try { & npm install } finally { Pop-Location }
+        }
+        $cfgText = if (Test-Path $Config) { Get-Content -Raw $Config } else { "" }
+        $listen = if ($cfgText -match '(?m)^\s*listen_addr:\s*"?([^"\r\n#]+?)"?\s*(#.*)?$') { $Matches[1].Trim() } else { "127.0.0.1:8787" }
+        $adminToken = if ($cfgText -match '(?m)^\s*auth_token:\s*"?([^"\r\n#]*?)"?\s*(#.*)?$') { $Matches[1].Trim() } else { "" }
+        $env:PROXY_ADMIN_BASE_URL = "http://$listen"
+        $env:PROXY_ADMIN_TOKEN = $adminToken
+        Write-Host "Starting admin UI (localhost only) -> http://127.0.0.1:3939 ..."
+        $web = Start-Process -FilePath "npm.cmd" -ArgumentList @("run", "dev") -WorkingDirectory $webDir -PassThru
+    } catch {
+        Write-Warning "Could not start the admin UI ($($_.Exception.Message)). Continuing with the proxy only; run it manually with:  cd web; npm install; npm run dev"
+        $web = $null
+    }
+}
+
 $proxyArgs = @("-config", $Config)
 if ($Classifier -ne "") { $proxyArgs += @("-classifier", $Classifier) }
 
 Write-Host "Starting Local LFM DLP Proxy on 127.0.0.1:8787 ..."
+if ($web) { Write-Host "Admin UI: http://127.0.0.1:3939  (Ctrl+C here stops the UI and proxy)" }
 try {
     & .\proxy.exe @proxyArgs
 }
 finally {
+    # Stop the admin UI we started (kill the npm -> node process tree).
+    if ($web -and -not $web.HasExited) {
+        Write-Host "Stopping admin UI (pid $($web.Id)) ..."
+        taskkill /PID $web.Id /T /F 2>$null | Out-Null
+    }
     # Only stop a sidecar this script started; leave a pre-existing one running.
     if ($sidecar -and -not $sidecar.HasExited) {
         Write-Host "Stopping LFM sidecar (pid $($sidecar.Id)) ..."

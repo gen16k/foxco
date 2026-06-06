@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+	"unicode/utf8"
 
 	"local-lfm-dlp-proxy/internal/anthropic"
 	"local-lfm-dlp-proxy/internal/dlp"
@@ -18,6 +19,10 @@ import (
 )
 
 const defaultMaxBody = 32 << 20 // 32 MiB
+
+// maxPromptBytes caps how much live-turn text is persisted when store_raw_text
+// is enabled, so one giant prompt can't bloat the audit DB.
+const maxPromptBytes = 16 << 10 // 16 KiB
 
 // Handler implements the proxy request flow.
 type Handler struct {
@@ -28,17 +33,21 @@ type Handler struct {
 	failClosed bool
 	modelName  string
 	backend    string
+	storeRaw   bool // persist the live-turn prompt (opt-in; off by default)
 	maxBody    int64
 }
 
-// New builds a Handler.
-func New(d *dlp.Detector, f *anthropic.Forwarder, audit storage.Recorder, log *slog.Logger, failClosed bool, modelName, backend string) *Handler {
+// New builds a Handler. storeRaw enables persisting the live user-turn prompt to
+// the audit DB (store_raw_text); it is off by default and intentionally relaxes
+// the "never persist raw content" invariant for the local admin UI.
+func New(d *dlp.Detector, f *anthropic.Forwarder, audit storage.Recorder, log *slog.Logger, failClosed bool, modelName, backend string, storeRaw bool) *Handler {
 	if audit == nil {
 		audit = storage.NopRecorder{}
 	}
 	return &Handler{
 		detector: d, forwarder: f, audit: audit, log: log,
-		failClosed: failClosed, modelName: modelName, backend: backend, maxBody: defaultMaxBody,
+		failClosed: failClosed, modelName: modelName, backend: backend,
+		storeRaw: storeRaw, maxBody: defaultMaxBody,
 	}
 }
 
@@ -84,7 +93,7 @@ func (h *Handler) process(w http.ResponseWriter, r *http.Request, isCount bool) 
 	if perr != nil {
 		// Un-inspectable request: fail closed (block) rather than risk egress.
 		if h.failClosed {
-			h.recordBlock(start, "request_unparseable", "proxy")
+			h.recordBlock(start, "request_unparseable", "proxy", r.URL.Path, "")
 			h.writeBlock(w, req, isCount, "リクエストを解析できなかったため送信をブロックしました。")
 			return
 		}
@@ -92,9 +101,14 @@ func (h *Handler) process(w http.ResponseWriter, r *http.Request, isCount bool) 
 		return
 	}
 
+	// The live turn (the newest user message) is the prompt being sent now. We
+	// capture only this turn, not the whole history, which Claude Code resends
+	// every request. It is persisted only when store_raw_text is enabled.
+	liveText := h.liveTurnText(msgs)
+
 	eval := h.detector.Evaluate(r.Context(), segs, dlp.LastMessageIndex(msgs))
 	if eval.Block {
-		h.recordBlock(start, eval.BlockReason, eval.BlockSource)
+		h.recordBlock(start, eval.BlockReason, eval.BlockSource, r.URL.Path, liveText)
 		// Fail-closed because the classifier could not vet the content (warming /
 		// sidecar down): no egress, but surface a distinct "starting up" message
 		// rather than a sensitive-content block so the user knows to just retry.
@@ -113,7 +127,7 @@ func (h *Handler) process(w http.ResponseWriter, r *http.Request, isCount bool) 
 	if len(eval.HistoryNG) > 0 {
 		sanitized, serr := sanitizer.Sanitize(msgs, eval.HistoryNG)
 		if serr != nil {
-			h.recordBlock(start, "sanitize_failed", "sanitizer")
+			h.recordBlock(start, "sanitize_failed", "sanitizer", r.URL.Path, liveText)
 			h.log.Warn("decision", "result", "BLOCK", "reason", "sanitize_failed", "latency_ms", since(start))
 			h.writeBlock(w, req, isCount,
 				"過去の履歴に機密情報が残っています。/clear で会話をリセットしてから再開してください。")
@@ -130,11 +144,11 @@ func (h *Handler) process(w http.ResponseWriter, r *http.Request, isCount bool) 
 	status, ferr := h.forwarder.Forward(r.Context(), r.URL.Path, r.Header, body, w)
 	if ferr != nil {
 		http.Error(w, "upstream error", http.StatusBadGateway)
-		h.recordAllow(start, 0, false)
+		h.recordAllow(start, 0, false, r.URL.Path, liveText)
 		h.log.Warn("upstream_error", "err", ferr.Error())
 		return
 	}
-	h.recordAllow(start, status, true)
+	h.recordAllow(start, status, true, r.URL.Path, liveText)
 	h.log.Info("decision", "result", "ALLOW", "upstream_status", status, "latency_ms", since(start))
 }
 
@@ -142,10 +156,10 @@ func (h *Handler) forwardRaw(w http.ResponseWriter, r *http.Request, body []byte
 	status, ferr := h.forwarder.Forward(r.Context(), r.URL.Path, r.Header, body, w)
 	if ferr != nil {
 		http.Error(w, "upstream error", http.StatusBadGateway)
-		h.recordAllow(start, 0, false)
+		h.recordAllow(start, 0, false, r.URL.Path, "")
 		return
 	}
-	h.recordAllow(start, status, true)
+	h.recordAllow(start, status, true, r.URL.Path, "")
 }
 
 // passthrough transparently relays any non-message path/method to the upstream.
@@ -200,19 +214,23 @@ func (h *Handler) writeBlock(w http.ResponseWriter, req *anthropic.Request, isCo
 	_, _ = w.Write(raw)
 }
 
-func (h *Handler) recordBlock(start time.Time, reason, source string) {
+func (h *Handler) recordBlock(start time.Time, reason, source, path, liveText string) {
 	_ = h.audit.Record(storage.AuditEvent{
 		EventID: anthropic.NewBlockID(), CreatedAt: now(), EventType: "request",
 		Decision: "BLOCK", LatencyMS: since(start), ModelName: h.modelName, Backend: h.backend,
-		UpstreamCalled: false, Details: safeDetails(reason, source),
+		UpstreamCalled: false, Details: safeDetails(reason, source), Path: path,
+		PromptText: h.promptPtr(liveText),
+		// MatchedSnippet is left unset: the evaluation does not isolate the exact
+		// offending span, so a precise snippet is deferred (see docs/todo.md).
 	})
 }
 
-func (h *Handler) recordAllow(start time.Time, status int, upstreamCalled bool) {
+func (h *Handler) recordAllow(start time.Time, status int, upstreamCalled bool, path, liveText string) {
 	_ = h.audit.Record(storage.AuditEvent{
 		EventID: anthropic.NewBlockID(), CreatedAt: now(), EventType: "request",
 		Decision: "ALLOW", LatencyMS: since(start), ModelName: h.modelName, Backend: h.backend,
-		UpstreamCalled: upstreamCalled, Details: safeStatus(status),
+		UpstreamCalled: upstreamCalled, Details: safeStatus(status), Path: path,
+		PromptText: h.promptPtr(liveText),
 	})
 }
 
@@ -222,8 +240,28 @@ func (h *Handler) recordPassthrough(start time.Time, method, path string, status
 	_ = h.audit.Record(storage.AuditEvent{
 		EventID: anthropic.NewBlockID(), CreatedAt: now(), EventType: "request",
 		Decision: "PASSTHROUGH", LatencyMS: since(start), ModelName: h.modelName, Backend: h.backend,
-		UpstreamCalled: upstreamCalled, Details: safePassthrough(method, path, status),
+		UpstreamCalled: upstreamCalled, Details: safePassthrough(method, path, status), Path: path,
 	})
+}
+
+// liveTurnText returns the flattened text of the latest (live) user turn, or ""
+// if there is none.
+func (h *Handler) liveTurnText(msgs []anthropic.Message) string {
+	li := dlp.LastMessageIndex(msgs)
+	if li < 0 || li >= len(msgs) {
+		return ""
+	}
+	return msgs[li].FlatText()
+}
+
+// promptPtr returns the prompt text to persist, or nil when raw storage is off
+// or there is nothing to store. Long prompts are truncated (rune-safe).
+func (h *Handler) promptPtr(text string) *string {
+	if !h.storeRaw || text == "" {
+		return nil
+	}
+	t := truncate(text, maxPromptBytes)
+	return &t
 }
 
 // estimateTokens gives a rough local token count (~4 chars/token) so a blocked
@@ -256,6 +294,19 @@ func safeStatus(status int) string {
 func safePassthrough(method, path string, status int) string {
 	b, _ := json.Marshal(map[string]any{"method": method, "path": path, "upstream_status": status})
 	return string(b)
+}
+
+// truncate cuts s to at most max bytes without splitting a UTF-8 rune, appending
+// a marker when it shortens the string.
+func truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	cut := max
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…(truncated)"
 }
 
 func now() string             { return time.Now().UTC().Format(time.RFC3339) }

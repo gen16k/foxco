@@ -28,6 +28,7 @@ type Config struct {
 	Storage   Storage   `yaml:"storage"`
 	Logging   Logging   `yaml:"logging"`
 	Service   Service   `yaml:"service"`
+	Admin     Admin     `yaml:"admin"`
 }
 
 type Server struct {
@@ -104,6 +105,16 @@ type Service struct {
 	Name string `yaml:"name"`
 }
 
+// Admin configures the read-only observability API (/admin/*) consumed by the
+// local admin UI. It binds the same localhost address as the proxy.
+type Admin struct {
+	Enabled bool `yaml:"enabled"`
+	// AuthToken, when non-empty, requires `Authorization: Bearer <token>` on every
+	// /admin/* request. Recommended whenever store_raw_text is true (the audit DB
+	// then contains secrets). Empty = no token (localhost-only, advisory).
+	AuthToken string `yaml:"auth_token"`
+}
+
 // Default returns a configuration with the agreed safe defaults.
 func Default() Config {
 	cfg := Config{
@@ -153,6 +164,7 @@ func Default() Config {
 		},
 		Logging: Logging{Level: "info", RedactSensitiveValues: true},
 		Service: Service{Name: "LocalLfmDlpProxy"},
+		Admin:   Admin{Enabled: true},
 	}
 	cfg.expandPaths()
 	return cfg

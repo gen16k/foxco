@@ -29,6 +29,7 @@ import (
 	"syscall"
 	"time"
 
+	"local-lfm-dlp-proxy/internal/admin"
 	"local-lfm-dlp-proxy/internal/anthropic"
 	"local-lfm-dlp-proxy/internal/config"
 	"local-lfm-dlp-proxy/internal/dlp"
@@ -59,6 +60,11 @@ func main() {
 
 	log, closeLog := newLogger(cfg, isWindowsService())
 	defer closeLog()
+
+	if cfg.Storage.StoreRawText {
+		log.Warn("store_raw_text is ENABLED: the audit DB will persist live prompt text (including any secrets). " +
+			"This relaxes the default no-raw-content posture; keep it off in production and set admin.auth_token.")
+	}
 
 	// One-shot: generate/load the CA and exit (install.ps1 then trusts ca.crt).
 	if *initCA {
@@ -136,22 +142,45 @@ func buildApp(cfg config.Config, classifierOverride string, log *slog.Logger) (*
 	forwarder := anthropic.NewForwarderWithTransport(cfg.Upstream.BaseURL, cfg.Upstream.TimeoutMS, rt)
 
 	var audit storage.Recorder = storage.NopRecorder{}
+	var store *storage.Store
 	cleanup := func() {}
 	if cfg.Storage.Type == "sqlite" {
-		if st, err := storage.Open(cfg.Storage.Path, cfg.Storage.RetentionDays); err != nil {
+		st, err := storage.Open(cfg.Storage.Path, cfg.Storage.RetentionDays)
+		if err != nil {
 			log.Warn("audit storage disabled", "err", err)
 		} else {
 			audit = st
+			store = st
 			cleanup = func() { _ = st.Close() }
 			log.Info("audit storage open", "path", cfg.Storage.Path)
 		}
 	}
 
-	h := proxy.New(detector, forwarder, audit, log, cfg.DLP.FailClosed, cfg.Inference.Model, backend)
+	h := proxy.New(detector, forwarder, audit, log, cfg.DLP.FailClosed, cfg.Inference.Model, backend, cfg.Storage.StoreRawText)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
+	startedAt := time.Now().UTC().Format(time.RFC3339)
 	app := &application{cfg: cfg, log: log}
+
+	// Read-only observability API for the local admin UI (localhost-only). Registered
+	// on the shared mux, so it is served on every configured listener (app.servers).
+	if cfg.Admin.Enabled {
+		if store != nil {
+			ah := admin.New(store, admin.Meta{
+				StoreRawText:  cfg.Storage.StoreRawText,
+				RetentionDays: cfg.Storage.RetentionDays,
+				Model:         cfg.Inference.Model,
+				Backend:       backend,
+				ListenAddr:    cfg.Server.ListenAddr,
+				StartedAt:     startedAt,
+			}, cfg.Admin.AuthToken, log)
+			ah.Register(mux)
+			log.Info("admin api enabled", "routes", "/admin/*", "auth_required", cfg.Admin.AuthToken != "")
+		} else {
+			log.Warn("admin api requested but audit storage is not open; skipping")
+		}
+	}
 
 	if transparent {
 		ca, err := mitm.EnsureCA(cfg.TLS.CACertPath, cfg.TLS.CAKeyPath, cfg.TLS.NameConstraints)

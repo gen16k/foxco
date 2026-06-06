@@ -64,6 +64,47 @@ Accepted
 ### Related Records
 - docs/records/20260606/2101-transparent-https-interception.md
 
+## 管理UI向けオプトイン生プロンプト保存 + 読み取り専用 admin API (20260606 21:20)
+
+### Status
+Accepted
+
+### Context
+
+ローカル proxy の検知件数・検知内容・全プロンプト履歴を確認する Grafana 風の管理UI
+（Next.js）をユーザーが要望。現状の監査DB（`audit_events`）は **メタデータのみ**
+（decision/reason/source/latency/backend/時刻）を保存し、生のプロンプト本文・機密値は
+一切保存しない（CLAUDE.md「Never log or persist raw content」不変条件、`store_raw_text:false`）。
+「プロンプト履歴」「検知内容」を表示するには生データ保存が必須で、これは不変条件を緩める。
+ユーザーに明示的に確認し、(1) プロンプト全文を保存、(2) Go に読み取り専用 admin API を追加、
+(3) 秘密情報を保存するため UI に ID/PW 認証＋ admin API に任意の Bearer トークン、で合意。
+
+### Decision
+
+- `storage.store_raw_text`（既存・既定 false）を実際に配線。**true のときのみ**、各リクエストの
+  **ライブターン（最新のユーザーターン）本文**を `audit_events.prompt_text` に保存する
+  （ALLOW/BLOCK 双方）。Claude Code は毎回全履歴を再送するため、配列全体ではなく新規ターンのみ
+  を保存して重複を回避。本文は ~16KiB で rune 安全に切り詰め。`request_unparseable` 等の
+  解析不能リクエストは本文を保存しない。
+- 監査スキーマに nullable 列 `prompt_text`/`matched_snippet`/`path` を追加。既存DBには
+  `PRAGMA table_info` ベースの冪等マイグレーション（`ALTER TABLE ADD COLUMN`）で追加。
+- 読み取り専用 `internal/admin`（`GET /admin/stats|events|events/{id}|meta`）を追加。proxy と
+  同一 mux・同一 localhost バインド。`admin.enabled`（既定 true）で切替、`admin.auth_token`
+  が非空なら `Authorization: Bearer` を必須化（store_raw_text=true 時は設定を強く推奨）。
+- `matched_snippet` は当面未使用（`dlp.Evaluation` が該当セグメントを単独露出しないため、
+  正確な機密スパン抽出は先送り。docs/todo.md 参照）。
+
+### Consequences
+
+- `store_raw_text:true` の監査DBは**秘密情報を含む**。保護は retention（既定30日）・localhost
+  バインド・OSファイル権限・admin トークンのみ＝**advisory であり強制境界ではない**。本番は
+  既定 false を維持。デモ時のみ true + auth_token を設定する運用。
+- 既定（false）の動作は不変＝メタデータのみ。後方互換のマイグレーションで旧DBもそのまま読める。
+- admin API は読み取り専用で上流送信を一切行わない（egress 経路を増やさない）。
+
+### Related Records
+- docs/records/20260606/2117-admin-observability-and-ui.md
+
 ## AMD APU 推論バックエンド = llama.cpp Vulkan(iGPU)、CPU フォールバック (20260606 19:31)
 
 ### Status

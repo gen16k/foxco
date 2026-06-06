@@ -85,7 +85,10 @@ only if it is missing, add it with `winget install KhronosGroup.VulkanRT`. ROCm 
 ### Launch
 
 `start.ps1` is a one-command launcher: it starts the sidecar, waits for it to become
-healthy, then starts the proxy.
+healthy, then starts the proxy **and the admin web UI** (`web/`, Next.js) on
+`http://127.0.0.1:3939` — loopback only. The launcher passes the admin API address
+and `admin.auth_token` from the chosen config to the UI automatically. Pass
+`-NoWeb` to skip the UI. Ctrl+C stops everything it started.
 
 ```powershell
 # Option A: real LFM on the integrated Radeon iGPU via Vulkan (LFM2.5 GGUF,
@@ -130,6 +133,10 @@ Code at the plain-HTTP listener:
 $env:ANTHROPIC_BASE_URL = "http://127.0.0.1:8787"   # no /v1 suffix
 claude
 ```
+
+Open the admin UI at `http://127.0.0.1:3939` to see detection counts, contents, and
+prompt history. Prompt bodies are shown only when the proxy runs with
+`storage.store_raw_text: true` (off by default). See `web/README.md` for details.
 
 ## Layout
 

@@ -91,7 +91,13 @@ cache:
 storage:
   type: "sqlite"
   path: "%ProgramData%\\LocalLfmDlpProxy\\state\\dlp.db"
-  store_raw_text: false        # never persist raw content / secrets
+  # store_raw_text: default false = metadata only (no raw content / secrets).
+  # When true, the audit DB ALSO persists the live user turn (the new prompt) for
+  # every request so the admin UI can show prompt history + detection contents.
+  # This DELIBERATELY relaxes the "never persist raw content" invariant and WILL
+  # store secrets. Keep it false in production; enable it only for a local demo,
+  # and pair it with admin.auth_token below. See docs/decisions.md.
+  store_raw_text: false
   retention_days: 30
 
 logging:
@@ -104,3 +110,11 @@ logging:
 service:
   # Windows service name (used by install.ps1 / uninstall.ps1 / proxyctl.ps1).
   name: "LocalLfmDlpProxy"
+
+admin:
+  # Read-only observability API (/admin/stats, /admin/events, /admin/meta) for the
+  # local admin UI. Binds the same localhost address as the proxy; no LAN exposure.
+  enabled: true
+  # When set, every /admin/* request must send `Authorization: Bearer <token>`.
+  # Strongly recommended whenever store_raw_text is true. Empty = no token.
+  auth_token: ""

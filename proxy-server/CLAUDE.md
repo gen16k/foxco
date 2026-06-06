@@ -83,10 +83,21 @@ claude
 These are non-negotiable for the proxy. Changes that weaken them must be called out
 explicitly and confirmed with the user.
 
-* **Never log or persist raw content.** No HTTP request bodies, secret values,
-  user input, tool output, `Authorization` / `x-api-key` headers — not in logs,
-  not in panic dumps, not in the audit DB. `storage.store_raw_text` stays `false`;
-  the audit log records metadata only (decision, categories, latency, backend).
+* **Never log or persist raw content by default.** No HTTP request bodies, secret
+  values, user input, tool output, `Authorization` / `x-api-key` headers — not in
+  logs, not in panic dumps, not in the audit DB. The audit log records metadata
+  only (decision, reason, source, latency, backend). `Authorization` / `x-api-key`
+  are never persisted under any setting.
+  * **Opt-in exception (`storage.store_raw_text`, default `false`).** When a user
+    deliberately sets it `true`, the audit DB ALSO persists the live user-turn
+    prompt (`audit_events.prompt_text`) for every request so the local admin UI
+    can show prompt history + detection contents. This was added with explicit
+    user confirmation (see `docs/decisions.md`, 20260606). It then stores secrets,
+    protected only by retention, the localhost bind, OS file permissions, and the
+    optional `admin.auth_token` — i.e. advisory, not an enforcement boundary. Keep
+    it `false` in production; enable it only for a local demo and pair it with
+    `admin.auth_token`. The read-only `/admin/*` API is localhost-only and never
+    forwards anything upstream.
 * **Fail closed.** When the classifier is unavailable or times out, block rather
   than allow egress (`dlp.fail_closed: true`). The same applies when history
   sanitization cannot produce a structurally valid `messages` array.
