@@ -111,6 +111,22 @@ type chatResponse struct {
 	} `json:"choices"`
 }
 
+// defaultMaxTokens caps the model reply when the active profile does not set its
+// own. A binary verdict needs only a few tokens; this preserves the historical
+// behavior for the classifier profiles.
+const defaultMaxTokens = 128
+
+// maxTokens is the reply cap for the active profile, falling back to the default
+// when the profile leaves it at 0. Extraction profiles raise it so the full
+// multi-key JSON object is not truncated (a truncated body fails to parse and
+// then fails closed, blocking benign text).
+func (c *LlamaClient) maxTokens() int {
+	if c.profile.MaxTokens > 0 {
+		return c.profile.MaxTokens
+	}
+	return defaultMaxTokens
+}
+
 // Classify implements dlp.Classifier using the active PromptProfile.
 func (c *LlamaClient) Classify(ctx context.Context, in dlp.ClassifyInput) (dlp.ClassifyOutput, error) {
 	if c.timeout > 0 {
@@ -122,7 +138,7 @@ func (c *LlamaClient) Classify(ctx context.Context, in dlp.ClassifyInput) (dlp.C
 	body := chatRequest{
 		Model:       c.model,
 		Temperature: 0,
-		MaxTokens:   128,
+		MaxTokens:   c.maxTokens(),
 		Messages: []chatMessage{
 			{Role: "system", Content: c.profile.System},
 			{Role: "user", Content: c.profile.BuildUser(in)},

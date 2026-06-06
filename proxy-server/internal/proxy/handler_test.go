@@ -2,10 +2,13 @@ package proxy
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +16,7 @@ import (
 	"local-lfm-dlp-proxy/internal/anthropic"
 	"local-lfm-dlp-proxy/internal/dlp"
 	"local-lfm-dlp-proxy/internal/inference"
+	"local-lfm-dlp-proxy/internal/storage"
 )
 
 // mockUpstream records every request body it receives so tests can assert that
@@ -53,7 +57,34 @@ func newTestHandler(upstreamURL string) *Handler {
 	det := dlp.NewDetector(dlp.NewRuleEngine(), true, inference.NewKeywordClassifier(), dlp.NewCache(64), true)
 	fwd := anthropic.NewForwarder(upstreamURL, 5000)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return New(det, fwd, nil, log, true, "test", "keyword")
+	return New(det, fwd, nil, log, true, "test", "keyword", false)
+}
+
+// newCaptureHandler wires a handler to a real temp audit store so tests can
+// assert exactly what was (or was not) persisted. storeRaw toggles store_raw_text.
+func newCaptureHandler(t *testing.T, upstreamURL string, storeRaw bool) (*Handler, *storage.Store) {
+	t.Helper()
+	st, err := storage.Open(filepath.Join(t.TempDir(), "dlp.db"), 0)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { st.Close() })
+	det := dlp.NewDetector(dlp.NewRuleEngine(), true, inference.NewKeywordClassifier(), dlp.NewCache(64), true)
+	fwd := anthropic.NewForwarder(upstreamURL, 5000)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	return New(det, fwd, st, log, true, "test", "keyword", storeRaw), st
+}
+
+func onlyEvent(t *testing.T, st *storage.Store) storage.EventRow {
+	t.Helper()
+	page, err := st.Query(storage.EventFilter{})
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if page.Total != 1 {
+		t.Fatalf("expected 1 event, got %d", page.Total)
+	}
+	return page.Events[0]
 }
 
 func do(t *testing.T, h *Handler, path, body string) *httptest.ResponseRecorder {
@@ -154,6 +185,60 @@ func TestCountTokensBlockReturnsEstimateNoEgress(t *testing.T) {
 	}
 }
 
+// errClassifier always fails, simulating the LFM sidecar being down/warming.
+type errClassifier struct{}
+
+func (errClassifier) Classify(context.Context, dlp.ClassifyInput) (dlp.ClassifyOutput, error) {
+	return dlp.ClassifyOutput{}, errors.New("sidecar unavailable")
+}
+
+func TestPassthroughForwardsUnknownPath(t *testing.T) {
+	var gotMethod, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		_, _ = w.Write([]byte("model-list"))
+	}))
+	defer srv.Close()
+	h := newTestHandler(srv.URL)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/models?limit=2", nil)
+	rec := httptest.NewRecorder()
+	mux := http.NewServeMux()
+	h.Register(mux)
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if gotMethod != http.MethodGet || gotPath != "/v1/models" {
+		t.Errorf("passthrough did not preserve method/path: %s %s", gotMethod, gotPath)
+	}
+	if !strings.Contains(rec.Body.String(), "model-list") {
+		t.Errorf("client did not receive upstream passthrough body: %s", rec.Body.String())
+	}
+}
+
+func TestClassifierWarmingFailsClosedWithDistinctMessage(t *testing.T) {
+	up := newMockUpstream()
+	defer up.srv.Close()
+	det := dlp.NewDetector(dlp.NewRuleEngine(), true, errClassifier{}, dlp.NewCache(64), true)
+	fwd := anthropic.NewForwarder(up.srv.URL, 5000)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	h := New(det, fwd, nil, log, true, "test", "llama", false)
+
+	rec := do(t, h, "/v1/messages", `{"model":"claude","messages":[{"role":"user","content":"please help me refactor"}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if up.calls != 0 {
+		t.Fatalf("classifier-unavailable MUST fail closed (no egress), got %d calls", up.calls)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "起動") { // distinct "starting up" wording
+		t.Errorf("expected the classifier-warming message, got: %s", body)
+	}
+}
+
 func TestStreamBlockReturnsSSE(t *testing.T) {
 	up := newMockUpstream()
 	defer up.srv.Close()
@@ -168,5 +253,145 @@ func TestStreamBlockReturnsSSE(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "event: message_stop") {
 		t.Errorf("missing SSE terminal event: %s", rec.Body.String())
+	}
+}
+
+func TestCaptureOnAllowRawOn(t *testing.T) {
+	up := newMockUpstream()
+	defer up.srv.Close()
+	h, st := newCaptureHandler(t, up.srv.URL, true)
+
+	prompt := "please refactor my function"
+	do(t, h, "/v1/messages", `{"model":"claude","messages":[{"role":"user","content":"`+prompt+`"}]}`)
+
+	e := onlyEvent(t, st)
+	if e.Decision != "ALLOW" {
+		t.Fatalf("decision = %s", e.Decision)
+	}
+	if e.PromptText == nil || *e.PromptText != prompt {
+		t.Fatalf("prompt not captured: %v", e.PromptText)
+	}
+	if e.Path != "/v1/messages" {
+		t.Fatalf("path = %q", e.Path)
+	}
+}
+
+func TestCaptureOnBlockRawOn(t *testing.T) {
+	up := newMockUpstream()
+	defer up.srv.Close()
+	h, st := newCaptureHandler(t, up.srv.URL, true)
+
+	secret := "AKIAIOSFODNN7EXAMPLE"
+	do(t, h, "/v1/messages", `{"model":"claude","messages":[{"role":"user","content":"here is `+secret+`"}]}`)
+
+	e := onlyEvent(t, st)
+	if e.Decision != "BLOCK" || e.Source != "rule" {
+		t.Fatalf("decision/source = %s/%s", e.Decision, e.Source)
+	}
+	if e.PromptText == nil || !strings.Contains(*e.PromptText, secret) {
+		t.Fatalf("blocked prompt not captured: %v", e.PromptText)
+	}
+	// The matched snippet is the exact offending span for highlighting.
+	if e.MatchedSnippet == nil || *e.MatchedSnippet != secret {
+		t.Fatalf("matched snippet = %v, want exactly %q", e.MatchedSnippet, secret)
+	}
+	// The safe reason must name the rule but never echo the secret value.
+	if strings.Contains(e.Reason, secret) {
+		t.Errorf("reason leaked the secret value: %q", e.Reason)
+	}
+	if e.UpstreamCalled {
+		t.Fatal("block must not mark upstream called")
+	}
+}
+
+func TestCaptureSnippetOffStoresNoSnippet(t *testing.T) {
+	up := newMockUpstream()
+	defer up.srv.Close()
+	h, st := newCaptureHandler(t, up.srv.URL, false)
+
+	do(t, h, "/v1/messages", `{"model":"claude","messages":[{"role":"user","content":"key AKIAIOSFODNN7EXAMPLE"}]}`)
+
+	e := onlyEvent(t, st)
+	if e.Decision != "BLOCK" {
+		t.Fatalf("decision = %s", e.Decision)
+	}
+	if e.MatchedSnippet != nil {
+		t.Fatalf("raw-off must not store the matched snippet: %v", *e.MatchedSnippet)
+	}
+}
+
+func TestCaptureOffStoresNoPrompt(t *testing.T) {
+	up := newMockUpstream()
+	defer up.srv.Close()
+
+	// ALLOW with raw off.
+	hA, stA := newCaptureHandler(t, up.srv.URL, false)
+	do(t, hA, "/v1/messages", `{"model":"claude","messages":[{"role":"user","content":"please refactor"}]}`)
+	if e := onlyEvent(t, stA); e.PromptText != nil {
+		t.Fatalf("ALLOW raw-off stored prompt: %v", *e.PromptText)
+	}
+
+	// BLOCK with raw off.
+	hB, stB := newCaptureHandler(t, up.srv.URL, false)
+	do(t, hB, "/v1/messages", `{"model":"claude","messages":[{"role":"user","content":"AKIAIOSFODNN7EXAMPLE"}]}`)
+	if e := onlyEvent(t, stB); e.PromptText != nil {
+		t.Fatalf("BLOCK raw-off stored prompt: %v", *e.PromptText)
+	}
+}
+
+func TestCaptureLiveTurnOnly(t *testing.T) {
+	up := newMockUpstream()
+	defer up.srv.Close()
+	h, st := newCaptureHandler(t, up.srv.URL, true)
+
+	body := `{"model":"claude","messages":[
+		{"role":"user","content":"first question about apples"},
+		{"role":"assistant","content":"sure"},
+		{"role":"user","content":"second question about bananas"}
+	]}`
+	do(t, h, "/v1/messages", body)
+
+	e := onlyEvent(t, st)
+	if e.PromptText == nil || *e.PromptText != "second question about bananas" {
+		t.Fatalf("live turn not captured exactly: %v", e.PromptText)
+	}
+	if strings.Contains(*e.PromptText, "apples") {
+		t.Fatal("captured prompt leaked earlier history turns")
+	}
+}
+
+func TestCaptureUnparseableStoresNoPrompt(t *testing.T) {
+	up := newMockUpstream()
+	defer up.srv.Close()
+	h, st := newCaptureHandler(t, up.srv.URL, true)
+
+	do(t, h, "/v1/messages", `{not valid json`)
+
+	e := onlyEvent(t, st)
+	if e.Decision != "BLOCK" || e.Source != "proxy" {
+		t.Fatalf("unparseable decision/source = %s/%s", e.Decision, e.Source)
+	}
+	if e.PromptText != nil {
+		t.Fatalf("unparseable request must not store a prompt: %v", *e.PromptText)
+	}
+}
+
+func TestCaptureTruncatesLargePrompt(t *testing.T) {
+	up := newMockUpstream()
+	defer up.srv.Close()
+	h, st := newCaptureHandler(t, up.srv.URL, true)
+
+	big := strings.Repeat("a", 20000) // > maxPromptBytes (16 KiB)
+	do(t, h, "/v1/messages", `{"model":"claude","messages":[{"role":"user","content":"`+big+`"}]}`)
+
+	e := onlyEvent(t, st)
+	if e.PromptText == nil {
+		t.Fatal("large prompt not captured")
+	}
+	if len(*e.PromptText) >= len(big) {
+		t.Fatalf("prompt not truncated: len=%d", len(*e.PromptText))
+	}
+	if !strings.HasSuffix(*e.PromptText, "…(truncated)") {
+		t.Fatalf("missing truncation marker: ...%q", (*e.PromptText)[len(*e.PromptText)-20:])
 	}
 }

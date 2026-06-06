@@ -116,29 +116,44 @@ LFMを使う必然性:
 
 ```mermaid
 flowchart LR
-    U["User / Browser / LLM Client"] --> P["FoxCo Local Proxy"]
-    P --> R["Rule Engine\nRegex / Dictionary / Policy"]
-    P --> L["LFM Guard\nLFM2.5-1.2B-JP-202606"]
-    R --> D["Decision Engine"]
+    subgraph PC["開発者 PC (AMD Ryzen AI)"]
+        VS["VSCode\n+ PromptGate拡張"]
+        CC["Claude Code CLI\n(ANTHROPIC_BASE_URL=\nhttp://127.0.0.1:8787)"]
+        subgraph PG["PromptGate (Go, :8787)"]
+            R["Rule Engine\nRegex / APIキー検知"]
+            L["LFM Guard\nLFM2.5-1.2B-JP-202606\n(:8791 llama.cpp)"]
+            D["Decision Engine\nBLOCK / ALLOW"]
+            San["History Sanitizer"]
+            DB["SQLite Audit Log\n(メタデータのみ)"]
+        end
+        Admin["Admin Web UI\n(Next.js :3939)"]
+    end
+    Cloud["Anthropic API\n(Cloud)"]
+
+    VS -->|start.ps1 起動| PG
+    VS -->|/admin/* ポーリング| Admin
+    CC -->|プロンプト| PG
+    R --> D
     L --> D
-    D -->|Safe| C["Cloud LLM"]
-    D -->|Mask| M["Prompt Masker"] --> C
-    D -->|Block| B["Block Response\nReason + Fix Suggestion"]
-    D -->|Local Answer| A["LFM Local Answer"]
-    Admin["Web Admin UI"] --> R
-    Admin --> D
-    Logs["Local Audit Logs\nNo raw sensitive data"] --> Admin
-    D --> Logs
+    D -->|BLOCK| CC
+    D -->|ALLOW| San --> Cloud
+    D --> DB
+    DB --> Admin
+    Cloud --> CC
 ```
 
-主要コンポーネント:
+実装済みコンポーネント:
 
-- Local/Proxy Server: OpenAI互換APIまたはHTTP CONNECT/forward proxyとして動く
-- LFM Guard: プロンプトを分類し、検出エンティティ、リスク理由、推奨アクションをJSONで返す
-- Rule Engine: 正規表現、APIキー検知、企業辞書、部署別ポリシー
-- Decision Engine: LFM判定とルール判定を統合し、Block/Mask/Local Answer/Allowを決める
-- Admin UI: ポリシー管理、辞書管理、検出ログ、評価データ、デモモード
-- Evaluation Harness: テストデータに対するPrecision/Recall、誤検知、レイテンシを測る
+| コンポーネント | 実装 | 場所 |
+|---|---|---|
+| Go プロキシ | Anthropic Messages API互換、BLOCK/ALLOW、fail-closed | `proxy-server/cmd/proxy` |
+| Rule Engine | APIキー・認証情報・機密マーカーの正規表現ガードレール | `proxy-server/internal/dlp` |
+| LFM Guard | llama.cpp HTTPクライアント (swappable PromptProfile) | `proxy-server/internal/inference` |
+| History Sanitizer | ブロック済み履歴の構造的除去 + Messages配列検証 | `proxy-server/internal/sanitizer` |
+| SQLite Audit Log | メタデータ記録（raw textはデフォルト無効） | `proxy-server/internal/storage` |
+| Admin Web UI | Next.js、検知ログ・統計・ブロック理由ビュー | `proxy-server/web` |
+| VSCode Extension | プロキシ管理・サイドバーログ・Guard有効ターミナル | `vscode-extension/` |
+| Claude Code Hook | プロキシ未起動・未設定時の警告 | `.claude/settings.json` |
 
 ## 8. Team Roles
 
@@ -160,22 +175,42 @@ Senior Managerが拾うべき仕事:
 
 ## 9. MVP Scope
 
-Day 2デモに向けた最小構成:
+### クイックスタート
 
-1. OpenAI互換の `/v1/chat/completions` プロキシを作る
-2. プロンプトをLFM Guardに投げ、JSONで `action`, `risk_score`, `entities`, `reason`, `safe_prompt` を返す
-3. `action=block` の場合はクラウドLLMへ転送せず、警告と修正案を返す
-4. `action=mask` の場合はマスク済みプロンプトだけをクラウドLLMへ送る
-5. Admin UIでポリシー、辞書、検出ログを見せる
-6. AMD Ryzen AI PC上でオンデバイス判定のレイテンシを表示する
+```powershell
+# 1. llama.cpp (Vulkan build) を入手
+winget install ggml.llamacpp
 
-デモシナリオ:
+# 2. プロキシを起動 (sidecar + proxy + admin UI)
+cd proxy-server
+.\start.ps1                      # AMD iGPU (Vulkan) + LFM2.5-1.2B
+.\start.ps1 -Classifier keyword  # モデルなし、確定的ルール判定 (デモ確認用)
 
-- ユーザーが「取引先名 + 未公開プロジェクト名 + ソースコード」を含むプロンプトを入力
-- FoxCoが送信前に検知し、クラウドLLMへ送らずにブロック
-- 修正案として、社名やプロジェクト名を一般化した安全なプロンプトを提案
-- 次にマスキングモードで、伏せ字化されたプロンプトだけがクラウドLLMへ送られる
-- 最後に代理応答モードで、クラウドへ送らずLFMがローカル回答する
+# 3. Claude Code をプロキシ経由で起動
+#    VSCode 拡張の「Guard 有効ターミナルを開く」コマンド、または:
+$env:ANTHROPIC_BASE_URL = "http://127.0.0.1:8787"
+claude
+```
+
+Admin UI: `http://127.0.0.1:3939`
+
+### 実装済み機能
+
+1. Anthropic Messages API互換のローカルプロキシ (`/v1/messages`, `/v1/messages/count_tokens`)
+2. LFMによるプロンプト分類 (BLOCK / ALLOW) — llama.cpp OpenAI互換APIで呼び出し
+3. ルールガードレール — APIキー・秘密鍵・認証情報の即時ブロック
+4. ブロック済み履歴のサニタイズ — 汚染された会話ターンを除去してから転送
+5. SQLite監査ログ + `/admin/*` 読み取りAPI
+6. Admin Web UI (Next.js) — 検知ログ・ブロック統計・ブロック理由Top N
+7. VSCode拡張 — プロキシ起動・サイドバーログ・Guard有効ターミナル
+8. Claude Code hook — プロキシ未起動時の警告
+
+### デモシナリオ
+
+- ユーザーが「APIキー + 未公開プロジェクト名」を含むプロンプトを入力
+- PromptGateが送信前に検知し、Claude Codeにブロックレスポンスを返す
+- Admin UI / VSCodeサイドバーでブロック理由・レイテンシをリアルタイム表示
+- `start.ps1 -Classifier keyword` で LFM なしのルールのみ動作も実演可能
 
 ## 10. Evaluation Plan
 
@@ -203,13 +238,12 @@ Day 2デモに向けた最小構成:
 
 ## 11. Open Questions
 
-- ~~LFM2.5-1.2B-JP-202606の実行ランタイムは何を使うか: llama.cpp, FastFlowLM, LEAP SDKなど~~ → `proxy-server` は OpenAI 互換サイドカー方式。最終環境は **AMD Ryzen AI シリーズ APU**（RDNA3.5 iGPU + XDNA2 NPU。例: 開発機 Ryzen AI MAX+ 395 / デプロイ先 Ryzen AI 5 340）。既定 `start.ps1 -Backend auto` で **NPU → Vulkan(iGPU) → CPU**。**NPU(XDNA2)** は自作 Ryzen AI ONNX シム（`proxy-server/npu/npu_server.py`、LFM2 token-fusion ONNX）で対応済み。**Vulkan** は llama.cpp Vulkan ビルド（`winget install ggml.llamacpp`、`-ngl 99`）。NVIDIA/CUDA 不要。なお JP fine-tune の NPU 化は AMD の token-fusion 変換が要るため別途課題（`proxy-server/docs/todo.md`）。詳細は `proxy-server/docs/spec-proxy.md`
-- プロキシ方式はOpenAI互換APIに絞るか、ブラウザ拡張/OSプロキシも見せるか
-- ChatGPT/Claude公式UIを対象にする場合、実装上どこまで通信を安全に捕捉できるか
-- Responses APIの履歴引き継ぎにどう対応するか
-- マスキング後の復元が必要か。必要ならローカルだけに対応表を保持するか
-- FTの対象はPII抽出、機密分類、ポリシー判定、修正案生成のどれを優先するか
-- デモ用の社内辞書・疑似機密データをどう作るか
+- ~~LFM2.5-1.2B-JP-202606の実行ランタイムは何を使うか~~ → **解決済み**: OpenAI 互換サイドカー方式。最終環境は AMD Ryzen AI APU（RDNA3.5 iGPU + XDNA2 NPU。例: 開発機 Ryzen AI MAX+ 395 / デプロイ先 Ryzen AI 5 340）。既定 `start.ps1 -Backend auto` で **NPU → Vulkan(iGPU) → CPU**。NPU は自作 Ryzen AI ONNX シム（`proxy-server/npu/npu_server.py`、LFM2 token-fusion ONNX）、Vulkan は llama.cpp Vulkan ビルド（`-ngl 99`）。NVIDIA/CUDA 不要。JP fine-tune の NPU 化は AMD の token-fusion 変換が要るため別途課題（`proxy-server/docs/todo.md`）。詳細は `proxy-server/docs/spec-proxy.md`
+- ~~プロキシ方式はOpenAI互換APIに絞るか~~ → **解決済み**: `ANTHROPIC_BASE_URL` による Claude Code ターゲットのプロキシ方式を採用。OpenAI互換ではなく Anthropic Messages API互換。
+- ChatGPT/Claude公式UI (ブラウザ) を対象にする場合、HTTPS中間プロキシ方式が必要。MVPスコープ外。
+- ~~Responses APIの履歴引き継ぎにどう対応するか~~ → **解決済み**: History Sanitizerがブロック済みターンを構造的に除去してから転送。
+- FTの対象はPII抽出、機密分類、ポリシー判定のどれを優先するか (training/ で継続検討)
+- デモ用の社内辞書・疑似機密データをどう作るか (training/data/ 参照)
 
 ## 12. Source Links
 
@@ -221,4 +255,4 @@ Day 2デモに向けた最小構成:
 - LFM2.5 blog: https://www.liquid.ai/blog/introducing-lfm2-5-the-next-generation-of-on-device-ai
 - LFM2-350M-PII-Extract-JP-GGUF: https://huggingface.co/LiquidAI/LFM2-350M-PII-Extract-JP-GGUF
 
-Last updated: 2026-06-06 JST
+Last updated: 2026-06-06 JST (proxy-server Go実装・VSCode拡張追加)

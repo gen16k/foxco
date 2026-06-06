@@ -62,14 +62,17 @@ claude
 
 | Path | Responsibility |
 |------|----------------|
-| `cmd/proxy` | entrypoint, config + classifier wiring, HTTP server |
-| `internal/proxy` | request flow handler (parse → evaluate → sanitize → forward) |
-| `internal/anthropic` | Messages API types (round-trip safe), block response, SSE, forwarder |
+| `cmd/proxy` | entrypoint, config + classifier wiring, dual listeners, Windows service (`service_windows.go`) |
+| `internal/proxy` | request flow handler (parse → evaluate → sanitize → forward) + catch-all passthrough |
+| `internal/anthropic` | Messages API types (round-trip safe), block response, SSE, forwarder (`ForwardRaw` for passthrough) |
 | `internal/dlp` | normalize, segment, rule guardrail, cache, LFM detector/policy |
 | `internal/inference` | llama.cpp client (LFM) + keyword fallback classifier + `PromptProfile` |
 | `internal/sanitizer` | structure-aware history unit removal + validation |
 | `internal/storage` | SQLite audit log (no raw text / secrets) |
 | `internal/config` | YAML config + safe defaults |
+| `internal/mitm` | transparent mode: Name-Constrained root CA + on-the-fly leaf certs |
+| `internal/upstreamdial` | transparent mode: hosts-bypassing transport so the forward reaches the real upstream |
+| `internal/hostsfile` | transparent mode: crash-safe hosts-file redirect block (add on start / remove on stop) |
 | `config` | example config (`config.example.yaml`) |
 | `web` | admin / demo UI (placeholder; future scope) |
 | `docs` | design spec + work records / knowledge / decisions / todo (see below) |
@@ -86,10 +89,24 @@ claude
 These are non-negotiable for the proxy. Changes that weaken them must be called out
 explicitly and confirmed with the user.
 
-* **Never log or persist raw content.** No HTTP request bodies, secret values,
-  user input, tool output, `Authorization` / `x-api-key` headers — not in logs,
-  not in panic dumps, not in the audit DB. `storage.store_raw_text` stays `false`;
-  the audit log records metadata only (decision, categories, latency, backend).
+* **Never log or persist raw content by default.** No HTTP request bodies, secret
+  values, user input, tool output, `Authorization` / `x-api-key` headers — not in
+  logs, not in panic dumps, not in the audit DB. The audit log records metadata
+  only (decision, reason, source, latency, backend). `Authorization` / `x-api-key`
+  are never persisted under any setting.
+  * **Opt-in exception (`storage.store_raw_text`, default `false`).** When a user
+    deliberately sets it `true`, the audit DB ALSO persists the live user-turn
+    prompt (`audit_events.prompt_text`) for every request — and, on a block, the
+    offending span (`audit_events.matched_snippet`, a substring of the prompt) so
+    the local admin UI can show prompt history + highlight the detected content.
+    The safe `reason`/`details_json` still never contain the secret value. This
+    was added with explicit user confirmation (see `docs/decisions.md`,
+    20260606). It then stores secrets,
+    protected only by retention, the localhost bind, OS file permissions, and the
+    optional `admin.auth_token` — i.e. advisory, not an enforcement boundary. Keep
+    it `false` in production; enable it only for a local demo and pair it with
+    `admin.auth_token`. The read-only `/admin/*` API is localhost-only and never
+    forwards anything upstream.
 * **Fail closed.** When the classifier is unavailable or times out, block rather
   than allow egress (`dlp.fail_closed: true`). The same applies when history
   sanitization cannot produce a structurally valid `messages` array.
