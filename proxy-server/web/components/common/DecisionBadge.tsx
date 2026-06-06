@@ -5,7 +5,7 @@ export function DecisionBadge({ decision }: { decision: string }) {
   return (
     <span
       className={clsx(
-        "inline-flex items-center gap-1.5 rounded px-1.5 py-0.5 text-[11px] font-semibold",
+        "inline-flex items-center gap-1.5 rounded px-1.5 py-0.5 text-2xs font-semibold",
         block ? "bg-block/15 text-block" : "bg-allow/15 text-allow",
       )}
     >

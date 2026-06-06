@@ -20,6 +20,16 @@ const config: Config = {
       fontFamily: {
         mono: ["ui-monospace", "SFMono-Regular", "Menlo", "Consolas", "monospace"],
       },
+      // Type scale bumped ~1-2px over Tailwind defaults — the dashboard was
+      // reading too small. `2xs` replaces the old arbitrary text-[10px]/[11px]
+      // micro-labels so they scale with the rest.
+      fontSize: {
+        "2xs": ["0.75rem", { lineHeight: "1rem" }], // 12px
+        xs: ["0.8125rem", { lineHeight: "1.125rem" }], // 13px (was 12)
+        sm: ["0.9375rem", { lineHeight: "1.375rem" }], // 15px (was 14)
+        base: ["1.0625rem", { lineHeight: "1.625rem" }], // 17px (was 16)
+        lg: ["1.1875rem", { lineHeight: "1.75rem" }], // 19px (was 18)
+      },
       keyframes: {
         // Toast entry: slide in from the right and settle.
         "toast-in": {

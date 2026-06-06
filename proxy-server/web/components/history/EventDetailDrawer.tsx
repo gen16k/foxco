@@ -11,7 +11,7 @@ import { fmtLocalDateTime, fmtLatency } from "@/lib/format";
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <dt className="text-[11px] uppercase tracking-wide text-zinc-500">{label}</dt>
+      <dt className="text-2xs uppercase tracking-wide text-zinc-500">{label}</dt>
       <dd className="mt-0.5 text-sm text-zinc-200">{children}</dd>
     </div>
   );
@@ -59,7 +59,7 @@ function Detail({ row }: { row: EventRow }) {
       </dl>
 
       <div>
-        <dt className="mb-1 text-[11px] uppercase tracking-wide text-zinc-500">Reason</dt>
+        <dt className="mb-1 text-2xs uppercase tracking-wide text-zinc-500">Reason</dt>
         <p className="rounded-md border border-edge bg-ink px-3 py-2 text-sm text-zinc-200">
           {row.reason || "—"}
         </p>
@@ -67,7 +67,7 @@ function Detail({ row }: { row: EventRow }) {
 
       {row.matchedSnippet && (
         <div>
-          <dt className="mb-1 text-[11px] uppercase tracking-wide text-zinc-500">
+          <dt className="mb-1 text-2xs uppercase tracking-wide text-zinc-500">
             検知された箇所（センシティブ判定）
           </dt>
           <pre className="overflow-x-auto rounded-md border border-block/40 bg-block/5 px-3 py-2 font-mono text-xs text-block">
@@ -77,7 +77,7 @@ function Detail({ row }: { row: EventRow }) {
       )}
 
       <div>
-        <dt className="mb-1 text-[11px] uppercase tracking-wide text-zinc-500">Prompt (live turn)</dt>
+        <dt className="mb-1 text-2xs uppercase tracking-wide text-zinc-500">Prompt (live turn)</dt>
         {row.promptText !== null ? (
           <pre className="max-h-[40vh] overflow-auto whitespace-pre-wrap break-words rounded-md border border-edge bg-ink px-3 py-2 font-mono text-xs text-zinc-200">
             <Highlighted text={row.promptText} snippet={row.matchedSnippet} />

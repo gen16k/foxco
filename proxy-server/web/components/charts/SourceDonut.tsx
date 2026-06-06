@@ -67,7 +67,7 @@ export function SourceDonut({ bySource }: { bySource: Record<string, number> }) 
           </li>
         ))}
       </ul>
-      <p className="mt-2 text-[11px] text-zinc-600">スライスをクリックで履歴を絞り込み</p>
+      <p className="mt-2 text-2xs text-zinc-600">スライスをクリックで履歴を絞り込み</p>
     </div>
   );
 }

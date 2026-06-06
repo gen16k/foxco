@@ -31,7 +31,7 @@ export function ToastViewport() {
   return (
     <div className="pointer-events-none fixed right-4 top-16 z-40 flex w-[22rem] max-w-[calc(100vw-2rem)] flex-col gap-2">
       {hidden > 0 && (
-        <div className="self-end rounded bg-panelAlt px-2 py-0.5 text-[11px] text-zinc-400">
+        <div className="self-end rounded bg-panelAlt px-2 py-0.5 text-2xs text-zinc-400">
           ＋{hidden} 件の検知
         </div>
       )}
@@ -70,15 +70,15 @@ function ToastCard({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }
         <button onClick={open} className="min-w-0 flex-1 text-left">
           <div className="flex items-center gap-2">
             <span className="text-xs font-semibold text-block">送信をブロックしました</span>
-            <span className="text-[10px] uppercase tracking-wide text-zinc-500">{event.source || "—"}</span>
+            <span className="text-2xs uppercase tracking-wide text-zinc-500">{event.source || "—"}</span>
           </div>
           <p className="mt-0.5 truncate text-xs text-zinc-300">{event.reason || "blocked"}</p>
           {detail && (
-            <p className="mt-1 truncate rounded bg-block/10 px-1.5 py-0.5 font-mono text-[11px] text-block">
+            <p className="mt-1 truncate rounded bg-block/10 px-1.5 py-0.5 font-mono text-2xs text-block">
               {detail}
             </p>
           )}
-          <p className="mt-1 text-[10px] text-zinc-500">{fmtRelative(event.createdAt)} · クリックで詳細 ↗</p>
+          <p className="mt-1 text-2xs text-zinc-500">{fmtRelative(event.createdAt)} · クリックで詳細 ↗</p>
         </button>
         <button
           onClick={onDismiss}
