@@ -49,6 +49,16 @@ type Inference struct {
 	HealthTimeoutMS  int    `yaml:"health_timeout_ms"`
 	Profile          string `yaml:"profile"`            // LFM I/O contract name (see internal/inference/profile.go)
 	SystemPromptFile string `yaml:"system_prompt_file"` // optional: override the profile's system prompt from a file
+	// ChatPath / HealthPath override the OpenAI-compatible request paths. Empty
+	// keeps the llama.cpp defaults (/v1/chat/completions, /health), which both the
+	// NPU shim and llama.cpp serve; set them only for an OGA runtime that uses a
+	// different prefix (e.g. Lemonade's /api/v1/...).
+	ChatPath   string `yaml:"chat_path"`
+	HealthPath string `yaml:"health_path"`
+	// Backend is the runtime label recorded in the audit log (npu|vulkan|cpu|
+	// llama_cpp). It documents which accelerator served a verdict; it does not
+	// select the backend (start.ps1 launches the matching sidecar and sets this).
+	Backend string `yaml:"backend"`
 }
 
 type Cache struct {

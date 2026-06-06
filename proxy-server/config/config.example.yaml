@@ -26,11 +26,16 @@ dlp:
     enabled: true
 
 inference:
-  # MVP backend: a llama.cpp server (llama-server) exposing the OpenAI-compatible
-  # chat API. On an AMD Ryzen AI APU, run the Vulkan build of llama-server so it
-  # offloads onto the integrated Radeon iGPU (`-ngl 99`); CPU is the fallback.
-  # `.\start.ps1` launches the sidecar for you (default -Backend vulkan). Set type
-  # to "keyword" to run without a model (dev/CI/demo fallback).
+  # The classifier talks to a local OpenAI-compatible LFM server over HTTP. Three
+  # backends are launched by `.\start.ps1` (default -Backend auto: NPU -> Vulkan ->
+  # CPU); the backend is chosen at launch, not here. start.ps1 passes the matching
+  # endpoint/paths/profile as CLI overrides, so the values below are the llama.cpp
+  # (Vulkan/CPU) defaults. Set type to "keyword" to run without a model.
+  #
+  #   * Vulkan/CPU — llama.cpp (llama-server), default paths below.
+  #   * NPU        — AMD Ryzen AI via the project's own ONNX shim (npu/npu_server.py).
+  #                  Serves the SAME paths (/v1/chat/completions, /health) on its own
+  #                  port, with the prompt-only profile (see commented block).
   type: "llama_cpp_http"
   endpoint: "http://127.0.0.1:8791"
   model: "LFM2.5-1.2B"
@@ -38,8 +43,27 @@ inference:
   health_timeout_ms: 500
   # LFM I/O contract (prompt + schema + output parsing). Swap this when a
   # fine-tuned model expects a different format. Built-ins: "reason_decision"
-  # (default), "ng_boolean". Register more in internal/inference/profile.go.
+  # (default, JSON-schema constrained), "reason_decision_prompt" (no schema; for
+  # OGA/NPU which has no GBNF enforcement), "ng_boolean". Register more in
+  # internal/inference/profile.go.
   profile: "reason_decision"
+  # Request paths. Empty/omitted = llama.cpp defaults (/v1/chat/completions,
+  # /health), which both llama.cpp and the NPU shim serve. Set them only for an OGA
+  # runtime that uses a different prefix (e.g. Lemonade's /api/v1/...).
+  # chat_path: "/v1/chat/completions"
+  # health_path: "/health"
+  # Audit-log runtime label only (npu|vulkan|cpu|llama_cpp); does not select the
+  # backend. start.ps1 sets this per launched sidecar.
+  # backend: "vulkan"
+  #
+  # --- AMD NPU (Ryzen AI ONNX shim) — set by `.\start.ps1 -Backend npu` ---
+  # The shim (npu/npu_server.py) runs LFM2 on the NPU and serves the default paths
+  # above on its own port, so only endpoint/profile/backend change.
+  # endpoint: "http://127.0.0.1:8792"
+  # model: "C:\\Users\\<you>\\ryzenai-lfm2\\LFM2-1.2B-ONNX_rai_1.7.1"  # local ONNX dir
+  # profile: "reason_decision_prompt"   # NPU cannot grammar-constrain output
+  # backend: "npu"
+  #
   # Optional: override just the profile's system prompt from a file (handy while
   # iterating on a fine-tuned model without rebuilding).
   # system_prompt_file: "C:\\path\\to\\system_prompt.txt"

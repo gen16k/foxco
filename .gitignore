@@ -12,8 +12,12 @@ models/
 *.db-wal
 state/
 
-# Runtime logs (proxy / llama-server)
+# Runtime logs (proxy / llama-server / NPU shim)
 *.log
+
+# Python caches (NPU shim is Python; run in the Ryzen AI conda env)
+__pycache__/
+*.pyc
 
 # Local classifier test log (kept locally, not version-controlled)
 proxy-server/docs/lfm2.5-classification-test.txt

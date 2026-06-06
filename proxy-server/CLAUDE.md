@@ -13,9 +13,11 @@ asks a local **LFM** (Liquid Foundation Model, LFM2.5-1.2B via a llama.cpp sidec
 whether the content is safe to send. Sensitive egress is **blocked**; once-blocked
 history is sanitized so it never leaks on a later turn. Written in Go (module
 `local-lfm-dlp-proxy`); the target is Windows on an **AMD Ryzen AI series APU**
-(RDNA 3.5 integrated Radeon iGPU + XDNA2 NPU; e.g. Ryzen AI MAX+ 395 / Ryzen 5
-350), with LFM inference on the integrated Radeon iGPU via the **Vulkan** build of
-llama.cpp (CPU fallback). No NVIDIA/CUDA is used.
+(RDNA 3.5 integrated Radeon iGPU + XDNA2 NPU; e.g. Ryzen AI MAX+ 395 / Ryzen AI 5
+340), with LFM inference defaulting to the **AMD NPU (XDNA2) via the project's own
+Ryzen AI ONNX shim** (`npu/npu_server.py`; llama.cpp/Ollama can't drive the NPU and
+Lemonade/OGA can't run LFM2), falling back to the integrated Radeon iGPU via the
+**Vulkan** build of llama.cpp, then CPU (`start.ps1 -Backend auto`). No NVIDIA/CUDA is used.
 
 * The repo-wide FoxCo overview is the root `../README.md`; this subtree's overview
   is `README.md`.
@@ -34,11 +36,15 @@ winget install ggml.llamacpp
 go build -o proxy.exe ./cmd/proxy
 go test ./...
 
-# One-command launch: start.ps1 starts the llama.cpp sidecar (auto-downloads the
-# GGUF), waits for /health, then starts the proxy. Default backend is the AMD iGPU
-# via Vulkan (-ngl 99); ROCm does not support AMD iGPUs on Windows.
-.\start.ps1                 # iGPU (Vulkan) sidecar + proxy
-.\start.ps1 -Backend cpu    # CPU sidecar + proxy (fallback)
+# One-command launch: start.ps1 picks a backend, starts the sidecar, waits for
+# /health, then starts the proxy. Default is -Backend auto: NPU -> Vulkan -> CPU
+# (health-gated). NPU = AMD Ryzen AI via the ONNX shim (npu/npu_server.py, run in
+# the ryzen-ai-1.7.1 conda env); Vulkan = AMD iGPU (-ngl 99); ROCm does not support
+# AMD iGPUs on Windows.
+.\start.ps1                 # auto (NPU -> Vulkan -> CPU)
+.\start.ps1 -Backend npu    # AMD NPU only (needs Ryzen AI 1.7.1 + LFM2 ONNX; see npu\README.md)
+.\start.ps1 -Backend vulkan # iGPU (Vulkan) only
+.\start.ps1 -Backend cpu    # CPU only (fallback)
 
 # Or run without a model (deterministic keyword fallback, for dev/CI/demo):
 .\start.ps1 -Classifier keyword

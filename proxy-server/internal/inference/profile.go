@@ -44,6 +44,7 @@ func DefaultProfile() PromptProfile { return profiles[DefaultProfileName] }
 
 func init() {
 	RegisterProfile(reasonDecisionProfile())
+	RegisterProfile(reasonDecisionPromptProfile())
 	RegisterProfile(ngBooleanProfile())
 }
 
@@ -80,6 +81,26 @@ func reasonDecisionProfile() PromptProfile {
 		Name:      "reason_decision",
 		System:    reasonDecisionSystem,
 		Schema:    reasonDecisionSchema,
+		BuildUser: defaultBuildUser,
+		Parse:     parseReasonDecision,
+	}
+}
+
+// ---------------------------------------------------------------------------
+// reason_decision_prompt — same contract as reason_decision, but with no JSON
+// schema, so the client never sends OpenAI `response_format`. This is the profile
+// for the AMD NPU path: the Ryzen AI ONNX runtime (token-fusion graph, greedy
+// decode) cannot grammar-constrain output the way llama.cpp's GBNF json_schema
+// does, so the shim ignores response_format. Correctness still holds because
+// parseReasonDecision is tolerant (JSON decision first, then a bare ALLOW/BLOCK
+// scan, else error → fail closed). Use via inference.profile.
+// ---------------------------------------------------------------------------
+
+func reasonDecisionPromptProfile() PromptProfile {
+	return PromptProfile{
+		Name:      "reason_decision_prompt",
+		System:    reasonDecisionSystem,
+		Schema:    nil, // no response_format -> prompt-only; relies on tolerant parsing
 		BuildUser: defaultBuildUser,
 		Parse:     parseReasonDecision,
 	}

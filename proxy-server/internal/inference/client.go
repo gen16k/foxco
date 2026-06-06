@@ -20,23 +20,40 @@ import (
 	"local-lfm-dlp-proxy/internal/dlp"
 )
 
-// LlamaClient is a dlp.Classifier backed by a llama.cpp server.
+// Default request paths for a llama.cpp server. The project's AMD NPU shim
+// (npu/npu_server.py) deliberately serves the same paths, so the NPU backend
+// needs no override. SetPaths remains for other OpenAI-compatible runtimes that
+// use a different prefix (e.g. an OGA model served via Lemonade under /api/v1).
+const (
+	defaultChatPath   = "/v1/chat/completions"
+	defaultHealthPath = "/health"
+)
+
+// LlamaClient is a dlp.Classifier backed by an OpenAI-compatible LFM server
+// (llama.cpp for Vulkan/CPU; the Ryzen AI ONNX shim for the AMD NPU — both serve
+// the same wire contract, so the client is backend-agnostic).
 type LlamaClient struct {
 	base          string
 	model         string
 	profile       PromptProfile
+	chatPath      string
+	healthPath    string
 	httpc         *http.Client
 	timeout       time.Duration
 	healthTimeout time.Duration
 }
 
 // NewLlamaClient builds a client using the default prompt profile. endpoint is
-// the llama-server base URL (e.g. http://127.0.0.1:8791).
+// the server base URL (e.g. http://127.0.0.1:8791 for llama.cpp, :8792 for the
+// NPU shim). Request paths default to the llama.cpp layout (which the NPU shim
+// also serves); override them with SetPaths for other OpenAI-compatible runtimes.
 func NewLlamaClient(endpoint, model string, timeoutMS, healthTimeoutMS int) *LlamaClient {
 	return &LlamaClient{
 		base:          strings.TrimRight(endpoint, "/"),
 		model:         model,
 		profile:       DefaultProfile(),
+		chatPath:      defaultChatPath,
+		healthPath:    defaultHealthPath,
 		httpc:         &http.Client{},
 		timeout:       time.Duration(timeoutMS) * time.Millisecond,
 		healthTimeout: time.Duration(healthTimeoutMS) * time.Millisecond,
@@ -45,6 +62,19 @@ func NewLlamaClient(endpoint, model string, timeoutMS, healthTimeoutMS int) *Lla
 
 // SetProfile swaps the prompt/schema/parse contract (e.g. for a fine-tuned model).
 func (c *LlamaClient) SetProfile(p PromptProfile) { c.profile = p }
+
+// SetPaths overrides the chat-completions and health request paths (e.g. the
+// "/api/v1" prefix some OGA runtimes like Lemonade use). The AMD NPU shim serves
+// the llama.cpp defaults, so it needs no override. An empty argument leaves that
+// path at its current value, so callers can pass through unset config.
+func (c *LlamaClient) SetPaths(chat, health string) {
+	if chat != "" {
+		c.chatPath = chat
+	}
+	if health != "" {
+		c.healthPath = health
+	}
+}
 
 // ProfileName reports the active profile name (for logging).
 func (c *LlamaClient) ProfileName() string { return c.profile.Name }
@@ -109,7 +139,7 @@ func (c *LlamaClient) Classify(ctx context.Context, in dlp.ClassifyInput) (dlp.C
 		return dlp.ClassifyOutput{}, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/v1/chat/completions", bytes.NewReader(raw))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+c.chatPath, bytes.NewReader(raw))
 	if err != nil {
 		return dlp.ClassifyOutput{}, err
 	}
@@ -139,7 +169,7 @@ func (c *LlamaClient) Health(ctx context.Context) error {
 		ctx, cancel = context.WithTimeout(ctx, c.healthTimeout)
 		defer cancel()
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/health", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+c.healthPath, nil)
 	if err != nil {
 		return err
 	}

@@ -79,25 +79,60 @@ only if it is missing, add it with `winget install KhronosGroup.VulkanRT`. ROCm 
 
 ### Launch
 
-`start.ps1` is a one-command launcher: it starts the sidecar, waits for it to become
-healthy, then starts the proxy.
+`start.ps1` is a one-command launcher: it picks a backend, starts the sidecar,
+waits for it to become healthy, then starts the proxy.
 
 ```powershell
-# Option A: real LFM on the integrated Radeon iGPU via Vulkan (LFM2.5 GGUF,
-# auto-downloaded on first run). This is the default backend.
+# Default: auto — prefer the AMD NPU, fall back to Vulkan(iGPU), then CPU. Each
+# step is accepted only if it becomes healthy, so a missing NPU is transparent.
 .\start.ps1
 
-# Same, but keep inference on the CPU (always-works fallback)
-.\start.ps1 -Backend cpu
+# Force a single backend (e.g. to disable the NPU):
+.\start.ps1 -Backend npu       # AMD NPU only (Ryzen AI ONNX shim)
+.\start.ps1 -Backend vulkan    # integrated Radeon via Vulkan (LFM2.5 GGUF)
+.\start.ps1 -Backend cpu       # CPU only (always-works fallback)
 
-# Option B: no model yet — deterministic keyword fallback (dev/demo, no sidecar)
+# No model yet — deterministic keyword fallback (dev/demo, no sidecar)
 .\start.ps1 -Classifier keyword
 ```
 
 If more than one Vulkan device shows up, pin the iGPU with
-`$env:GGML_VK_VISIBLE_DEVICES=0`. NPU (XDNA2) execution is future scope (see
-`docs/spec-proxy.md` §8.5). To manage the sidecar yourself, start `llama-server`
+`$env:GGML_VK_VISIBLE_DEVICES=0`. To manage the sidecar yourself, start it
 separately and run `.\start.ps1 -NoSidecar`.
+
+#### AMD NPU (XDNA2) backend
+
+The NPU runs LFM2 through the project's own **OpenAI-compatible shim**
+(`npu/npu_server.py`) wrapping AMD's LFM2 token-fusion ONNX +
+`RyzenAILightExecutionProvider`. llama.cpp/Ollama cannot drive the NPU, and
+Lemonade(OGA) cannot run LFM2 (it needs `genai_config.json`; LFM2 is outside the
+OGA flow), so the shim is the only path. It serves the same `/v1/chat/completions`
++ `/health` as llama.cpp on its own port (8792). Prerequisites (Windows 11):
+
+```text
+1. AMD NPU driver (XDNA2), AMD's specified WHQL build   # npu_sw_installer.exe (admin)
+2. Miniforge (conda)                                    # winget install CondaForge.Miniforge3
+3. Ryzen AI Software 1.7.1 (ryzen-ai-lt-1.7.1.exe)      # -> conda env ryzen-ai-1.7.1 (NPU EP)
+4. LFM2 NPU model (git lfs): amd/LFM2-1.2B-ONNX_rai_1.7.1   # ~2.5 GB, local directory
+```
+
+With those in place, `auto`/`-Backend npu` launches the shim automatically. To run
+it standalone (see `npu/README.md`):
+
+```powershell
+conda run -n ryzen-ai-1.7.1 python .\npu\npu_server.py `
+    --model C:\Users\<you>\ryzenai-lfm2\LFM2-1.2B-ONNX_rai_1.7.1 --port 8792
+.\start.ps1                                            # auto selects NPU when healthy
+```
+
+NPU notes: the NPU graph cannot grammar-constrain output, so the NPU path uses the
+`reason_decision_prompt` profile (no `response_format`) with the existing tolerant,
+fail-closed parser. The audit log records the runtime that served each verdict
+(`npu`/`vulkan`/`cpu`). On the dev machine (Strix Halo) the iGPU is fastest, but on
+the deploy target (Ryzen AI 340, ~10× smaller iGPU) the NPU is expected to win for
+this classifier workload, hence NPU-first by default. See `npu/README.md`,
+`docs/spec-proxy.md` §8.5, and
+`docs/knowledges/20260607/0125-lfm2-npu-shim-and-benchmark.md`.
 
 Then point Claude Code at the proxy:
 

@@ -25,6 +25,15 @@ import (
 func main() {
 	configPath := flag.String("config", "", "path to config.yaml")
 	classifierOverride := flag.String("classifier", "", "override classifier: llama|keyword")
+	// These let start.ps1 be the single source of runtime wiring: it picks a
+	// backend (npu/vulkan/cpu), launches the matching sidecar, and passes the
+	// endpoint/paths/profile/label here so the config file need not change per run.
+	endpointOverride := flag.String("endpoint", "", "override inference.endpoint")
+	modelOverride := flag.String("model", "", "override inference.model (e.g. the NPU model dir/label)")
+	profileOverride := flag.String("profile", "", "override inference.profile")
+	chatPathOverride := flag.String("chat-path", "", "override inference.chat_path")
+	healthPathOverride := flag.String("health-path", "", "override inference.health_path")
+	backendOverride := flag.String("backend", "", "audit runtime label: npu|vulkan|cpu|llama_cpp")
 	flag.Parse()
 
 	cfg, err := config.Load(*configPath)
@@ -32,6 +41,14 @@ func main() {
 		slog.Error("config load failed", "err", err)
 		os.Exit(1)
 	}
+	// CLI flags win over the config file (non-empty only) so a launcher can wire
+	// the runtime without rewriting config.yaml.
+	overrideStr(&cfg.Inference.Endpoint, *endpointOverride)
+	overrideStr(&cfg.Inference.Model, *modelOverride)
+	overrideStr(&cfg.Inference.Profile, *profileOverride)
+	overrideStr(&cfg.Inference.ChatPath, *chatPathOverride)
+	overrideStr(&cfg.Inference.HealthPath, *healthPathOverride)
+	overrideStr(&cfg.Inference.Backend, *backendOverride)
 
 	log := newLogger(cfg.Logging.Level)
 
@@ -64,7 +81,7 @@ func main() {
 	srv := &http.Server{Addr: cfg.Server.ListenAddr, Handler: mux}
 	go func() {
 		log.Info("listening", "addr", cfg.Server.ListenAddr, "upstream", cfg.Upstream.BaseURL,
-			"classifier", backend, "fail_closed", cfg.DLP.FailClosed)
+			"backend", backend, "model", cfg.Inference.Model, "fail_closed", cfg.DLP.FailClosed)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Error("server error", "err", err)
 			os.Exit(1)
@@ -92,6 +109,9 @@ func buildClassifier(cfg config.Config, override string, log *slog.Logger) (dlp.
 
 	client := inference.NewLlamaClient(cfg.Inference.Endpoint, cfg.Inference.Model,
 		cfg.DLP.ClassifyTimeoutMS, cfg.Inference.HealthTimeoutMS)
+	// Empty paths keep the llama.cpp defaults, which the NPU shim also serves; only
+	// an OGA runtime like Lemonade (/api/v1) needs these set.
+	client.SetPaths(cfg.Inference.ChatPath, cfg.Inference.HealthPath)
 
 	// Select the LFM I/O contract (swappable for fine-tuned models).
 	prof := inference.DefaultProfile()
@@ -125,7 +145,21 @@ func buildClassifier(cfg config.Config, override string, log *slog.Logger) (dlp.
 			log.Info("LFM warm", "endpoint", cfg.Inference.Endpoint, "model", cfg.Inference.Model)
 		}
 	}
-	return client, cfg.Inference.Model
+	// The audit log records the runtime that served the verdict (npu/vulkan/cpu),
+	// not the model name. start.ps1 sets -backend per launched sidecar; default to
+	// the generic llama.cpp label when unset.
+	backend := cfg.Inference.Backend
+	if backend == "" {
+		backend = "llama_cpp"
+	}
+	return client, backend
+}
+
+// overrideStr sets *dst to v when v is non-empty (CLI flag over config file).
+func overrideStr(dst *string, v string) {
+	if v != "" {
+		*dst = v
+	}
 }
 
 func cacheSize(cfg config.Config) int {
