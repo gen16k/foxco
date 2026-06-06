@@ -86,6 +86,24 @@ func TestEvaluateLiveBlock(t *testing.T) {
 	if !ev.Block {
 		t.Fatalf("live secret should block, got %+v", ev)
 	}
+	// LFM source: the whole flagged segment is the offending text.
+	if ev.BlockMatch != "now sending secretz" {
+		t.Errorf("BlockMatch = %q, want the flagged segment", ev.BlockMatch)
+	}
+}
+
+func TestEvaluateLiveBlockRuleSpan(t *testing.T) {
+	// Rule source: BlockMatch is the exact secret span, not the whole segment.
+	d := newDet(&stubClassifier{}, true)
+	const key = "AKIAIOSFODNN7EXAMPLE"
+	segs := []Segment{{Type: SegUserText, Text: "deploy with " + key + " now", MsgIndex: 0}}
+	ev := d.Evaluate(context.Background(), segs, 0)
+	if !ev.Block || ev.BlockSource != "rule" {
+		t.Fatalf("want rule block, got %+v", ev)
+	}
+	if ev.BlockMatch != key {
+		t.Errorf("BlockMatch = %q, want exact span %q", ev.BlockMatch, key)
+	}
 }
 
 func TestEvaluateHistoryNG(t *testing.T) {

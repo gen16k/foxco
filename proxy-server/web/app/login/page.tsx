@@ -83,10 +83,6 @@ function LoginForm() {
         >
           {loading ? "サインイン中…" : "サインイン"}
         </button>
-
-        <p className="mt-4 text-center text-[11px] text-zinc-600">
-          ローカル管理用。認証情報は .env.local で設定します。
-        </p>
       </form>
     </main>
   );

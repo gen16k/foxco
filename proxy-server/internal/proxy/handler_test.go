@@ -235,8 +235,32 @@ func TestCaptureOnBlockRawOn(t *testing.T) {
 	if e.PromptText == nil || !strings.Contains(*e.PromptText, secret) {
 		t.Fatalf("blocked prompt not captured: %v", e.PromptText)
 	}
+	// The matched snippet is the exact offending span for highlighting.
+	if e.MatchedSnippet == nil || *e.MatchedSnippet != secret {
+		t.Fatalf("matched snippet = %v, want exactly %q", e.MatchedSnippet, secret)
+	}
+	// The safe reason must name the rule but never echo the secret value.
+	if strings.Contains(e.Reason, secret) {
+		t.Errorf("reason leaked the secret value: %q", e.Reason)
+	}
 	if e.UpstreamCalled {
 		t.Fatal("block must not mark upstream called")
+	}
+}
+
+func TestCaptureSnippetOffStoresNoSnippet(t *testing.T) {
+	up := newMockUpstream()
+	defer up.srv.Close()
+	h, st := newCaptureHandler(t, up.srv.URL, false)
+
+	do(t, h, "/v1/messages", `{"model":"claude","messages":[{"role":"user","content":"key AKIAIOSFODNN7EXAMPLE"}]}`)
+
+	e := onlyEvent(t, st)
+	if e.Decision != "BLOCK" {
+		t.Fatalf("decision = %s", e.Decision)
+	}
+	if e.MatchedSnippet != nil {
+		t.Fatalf("raw-off must not store the matched snippet: %v", *e.MatchedSnippet)
 	}
 }
 

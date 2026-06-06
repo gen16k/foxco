@@ -2,26 +2,25 @@
 
 ## matched_snippet に正確な機密スパンを格納する
 
-- Status: Deferred
+- Status: Resolved
 - Discovered: 20260606 (docs/records/20260606/2117-admin-observability-and-ui.md)
+- Resolved: 20260606 (docs/records/20260606/2327-matched-snippet-highlight.md)
 
 ### Detail
 
 `store_raw_text=true` のとき、検知でブロックされた「該当箇所」だけを `matched_snippet` に格納し、
-管理UIでハイライト表示したい。現状は `prompt_text`（ライブターン全文）と `reason`（安全な理由）
-のみを保存し、`matched_snippet` は常に NULL。
+管理UIでハイライト表示したい。以前は `prompt_text`（ライブターン全文）と `reason`（安全な理由）
+のみを保存し、`matched_snippet` は常に NULL だった。
 
-### Why deferred / Blocked by
+### Resolution
 
-`dlp.Evaluation`（internal/dlp/detector.go）はブロック理由とソースのみを返し、該当セグメントの
-テキストや一致スパンを単独で露出しない。ルール検知は正規表現の一致位置が取れるが、LFM 検知は
-理由文のみで位置情報を持たない。両者を一様に扱う API 拡張（例: `Evaluation.BlockSegment string`）が
-必要で、今回のデモ範囲では `prompt_text` 全文表示で代替する。
-
-### Unblock condition
-
-`dlp.Detector.Evaluate` / `Classify` が該当セグメント（およびルール一致時はスパン）を返すよう
-拡張し、handler から `matched_snippet` に truncate して格納する。
+`dlp.Detector.Classify` の `Result` に `Match`、`Evaluate` の `Evaluation` に `BlockMatch` を追加。
+ルール検知は `RuleEngine.MatchSpan` で正規表現の一致部分文字列（=機密の値そのもの）を、LFM 検知は
+該当セグメント全文を `Match` に載せる。handler は `store_raw_text=true` のときだけ `snippetPtr` で
+truncate して `matched_snippet` に格納する（`prompt_text` と同じオプトインゲート）。`reason` には
+従来どおりルール名のみで値は入れない。管理UIの詳細ドロワーは `matched_snippet` を本文中で `<mark>`
+ハイライトする。LFM の場合はセグメント単位の粗いスパンに留まる（正規化差で本文と一致しないと
+ハイライトされず、別枠表示のみになる）が、ルール検知は正確なスパンが出る。
 
 ## LFM fail-closes on benign input (false-positive blocks)
 

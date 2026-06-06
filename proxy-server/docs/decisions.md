@@ -27,14 +27,18 @@ Accepted
 - 読み取り専用 `internal/admin`（`GET /admin/stats|events|events/{id}|meta`）を追加。proxy と
   同一 mux・同一 localhost バインド。`admin.enabled`（既定 true）で切替、`admin.auth_token`
   が非空なら `Authorization: Bearer` を必須化（store_raw_text=true 時は設定を強く推奨）。
-- `matched_snippet` は当面未使用（`dlp.Evaluation` が該当セグメントを単独露出しないため、
-  正確な機密スパン抽出は先送り。docs/todo.md 参照）。
+- `matched_snippet` に**検知された該当箇所**を保存（20260606 23:27 で実装、当初先送りから変更）。
+  `dlp.Result.Match` / `Evaluation.BlockMatch` を追加し、ルール検知は `RuleEngine.MatchSpan` で
+  正規表現の一致部分文字列（=機密の値）を、LFM 検知は該当セグメント全文を載せる。handler は
+  `store_raw_text=true` のときだけ truncate して `matched_snippet` に格納（`prompt_text` と同じ
+  オプトインゲート）。`matched_snippet` は `prompt_text` の部分文字列であり新たな露出は増えない。
+  `reason` には従来どおりルール名のみで機密値は入れない。管理UIは本文中で該当箇所をハイライト。
 
 ### Consequences
 
-- `store_raw_text:true` の監査DBは**秘密情報を含む**。保護は retention（既定30日）・localhost
-  バインド・OSファイル権限・admin トークンのみ＝**advisory であり強制境界ではない**。本番は
-  既定 false を維持。デモ時のみ true + auth_token を設定する運用。
+- `store_raw_text:true` の監査DBは**秘密情報を含む**（`prompt_text` と `matched_snippet` の両方）。
+  保護は retention（既定30日）・localhost バインド・OSファイル権限・admin トークンのみ＝**advisory
+  であり強制境界ではない**。本番は既定 false を維持。デモ時のみ true + auth_token を設定する運用。
 - 既定（false）の動作は不変＝メタデータのみ。後方互換のマイグレーションで旧DBもそのまま読める。
 - admin API は読み取り専用で上流送信を一切行わない（egress 経路を増やさない）。
 

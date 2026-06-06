@@ -84,7 +84,7 @@ func (h *Handler) process(w http.ResponseWriter, r *http.Request, isCount bool) 
 	if perr != nil {
 		// Un-inspectable request: fail closed (block) rather than risk egress.
 		if h.failClosed {
-			h.recordBlock(start, "request_unparseable", "proxy", r.URL.Path, "")
+			h.recordBlock(start, "request_unparseable", "proxy", r.URL.Path, "", "")
 			h.writeBlock(w, req, isCount, "リクエストを解析できなかったため送信をブロックしました。")
 			return
 		}
@@ -99,7 +99,7 @@ func (h *Handler) process(w http.ResponseWriter, r *http.Request, isCount bool) 
 
 	eval := h.detector.Evaluate(r.Context(), segs, dlp.LastMessageIndex(msgs))
 	if eval.Block {
-		h.recordBlock(start, eval.BlockReason, eval.BlockSource, r.URL.Path, liveText)
+		h.recordBlock(start, eval.BlockReason, eval.BlockSource, r.URL.Path, liveText, eval.BlockMatch)
 		h.log.Info("decision", "result", "BLOCK", "reason", eval.BlockReason,
 			"source", eval.BlockSource, "latency_ms", since(start))
 		h.writeBlock(w, req, isCount, eval.BlockReason)
@@ -109,7 +109,7 @@ func (h *Handler) process(w http.ResponseWriter, r *http.Request, isCount bool) 
 	if len(eval.HistoryNG) > 0 {
 		sanitized, serr := sanitizer.Sanitize(msgs, eval.HistoryNG)
 		if serr != nil {
-			h.recordBlock(start, "sanitize_failed", "sanitizer", r.URL.Path, liveText)
+			h.recordBlock(start, "sanitize_failed", "sanitizer", r.URL.Path, liveText, "")
 			h.log.Warn("decision", "result", "BLOCK", "reason", "sanitize_failed", "latency_ms", since(start))
 			h.writeBlock(w, req, isCount,
 				"過去の履歴に機密情報が残っています。/clear で会話をリセットしてから再開してください。")
@@ -171,14 +171,16 @@ func (h *Handler) writeBlock(w http.ResponseWriter, req *anthropic.Request, isCo
 	_, _ = w.Write(raw)
 }
 
-func (h *Handler) recordBlock(start time.Time, reason, source, path, liveText string) {
+func (h *Handler) recordBlock(start time.Time, reason, source, path, liveText, match string) {
 	_ = h.audit.Record(storage.AuditEvent{
 		EventID: anthropic.NewBlockID(), CreatedAt: now(), EventType: "request",
 		Decision: "BLOCK", LatencyMS: since(start), ModelName: h.modelName, Backend: h.backend,
 		UpstreamCalled: false, Details: safeDetails(reason, source), Path: path,
 		PromptText: h.promptPtr(liveText),
-		// MatchedSnippet is left unset: the evaluation does not isolate the exact
-		// offending span, so a precise snippet is deferred (see docs/todo.md).
+		// match is the offending text the admin UI highlights (rule: the exact
+		// secret span; lfm: the whole flagged segment). It is the secret value, so
+		// it is gated by the same opt-in as PromptText and never enters Details.
+		MatchedSnippet: h.snippetPtr(match),
 	})
 }
 
@@ -208,6 +210,17 @@ func (h *Handler) promptPtr(text string) *string {
 		return nil
 	}
 	t := truncate(text, maxPromptBytes)
+	return &t
+}
+
+// snippetPtr returns the offending span to persist (matched_snippet), gated by
+// the same store_raw_text opt-in as promptPtr because it carries the secret
+// value. nil when raw storage is off or there is no match.
+func (h *Handler) snippetPtr(match string) *string {
+	if !h.storeRaw || match == "" {
+		return nil
+	}
+	t := truncate(match, maxPromptBytes)
 	return &t
 }
 

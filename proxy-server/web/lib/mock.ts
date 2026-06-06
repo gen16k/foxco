@@ -2,8 +2,10 @@ import type { Stats, EventPage, EventRow, Meta, ReasonCount, SeriesPoint } from 
 
 // Mock mode lets the admin console run WITHOUT a proxy backend, so you can preview
 // the UI without starting (and routing Claude Code through) the proxy. Enable it
-// with USE_MOCK=1 (env or web/.env.local). All values are clearly fake: meta
-// reports backend "mock", and prompts use masked placeholders (no real secrets).
+// with USE_MOCK=1 (env or web/.env.local). meta reports backend "mock". Block
+// prompts show the FULL text (no masking — the proxy itself never masks) using
+// canonical, well-known fake example values (e.g. AWS docs' AKIA...EXAMPLE key),
+// so the detection highlight is visible without any real secret in the dataset.
 export function mockEnabled(): boolean {
   return process.env.USE_MOCK === "1";
 }
@@ -25,16 +27,54 @@ const ALLOW_PROMPTS = [
 interface BlockKind {
   reason: string;
   source: string;
-  prompt: string;
+  prompt: string; // full prompt text (unmasked, as the proxy stores it)
+  snippet: string; // the offending span the proxy flagged; must be a substring of prompt
 }
+// Each prompt embeds a canonical fake credential and `snippet` is the exact
+// offending span, so the detail drawer can highlight it inside the full text.
 const BLOCK_KINDS: BlockKind[] = [
-  { reason: "secret detected (aws_access_key)", source: "rule", prompt: "deploy with key AKIA************EXAMPLE to the bucket" },
-  { reason: "secret detected (anthropic_key)", source: "rule", prompt: "authenticate with sk-ant-api03-************************" },
-  { reason: "password or credential keyword", source: "lfm", prompt: "my password is ********, please log me in" },
-  { reason: "email address", source: "lfm", prompt: "send the quarterly report to j***.d**@example.com" },
-  { reason: "internal/private IP address", source: "lfm", prompt: "the prod server is at 10.0.**.** behind the vpn" },
-  { reason: "contains a real password", source: "lfm", prompt: "DB_PASSWORD=*********** in the production config" },
-  { reason: "classifier unavailable", source: "classifier_unavailable", prompt: "(blocked: classifier timed out — fail closed)" },
+  {
+    reason: "secret detected (aws_access_key)",
+    source: "rule",
+    prompt: "deploy the staging stack with AWS key AKIAIOSFODNN7EXAMPLE to the artifacts bucket, then restart the workers",
+    snippet: "AKIAIOSFODNN7EXAMPLE",
+  },
+  {
+    reason: "secret detected (anthropic_key)",
+    source: "rule",
+    prompt: "set ANTHROPIC_API_KEY=sk-ant-api03-EXAMPLEexampleEXAMPLEexample0000 and rerun the eval suite",
+    snippet: "sk-ant-api03-EXAMPLEexampleEXAMPLEexample0000",
+  },
+  {
+    reason: "secret detected (github_token)",
+    source: "rule",
+    prompt: "CI keeps failing to push — the token is ghp_EXAMPLEexample0123456789ABCDEFexample01, can you check the scopes?",
+    snippet: "ghp_EXAMPLEexample0123456789ABCDEFexample01",
+  },
+  {
+    reason: "database credential in prompt",
+    source: "lfm",
+    prompt: "write a migration for postgres://admin:Sup3rS3cret!@10.0.4.12:5432/prod that adds an index on orders(created_at)",
+    snippet: "postgres://admin:Sup3rS3cret!@10.0.4.12:5432/prod",
+  },
+  {
+    reason: "personal email address",
+    source: "lfm",
+    prompt: "draft a reply and send the signed contract to john.doe@example.com before end of day",
+    snippet: "john.doe@example.com",
+  },
+  {
+    reason: "internal hostname / private IP",
+    source: "lfm",
+    prompt: "ssh into the prod box at 10.0.12.47 and tail the gateway logs for the last hour",
+    snippet: "10.0.12.47",
+  },
+  {
+    reason: "classifier unavailable",
+    source: "classifier_unavailable",
+    prompt: "(blocked: classifier timed out — fail closed; the live turn was not classified)",
+    snippet: "",
+  },
 ];
 
 function rfc3339(ms: number): string {
@@ -65,7 +105,7 @@ function buildDataset(now: number): EventRow[] {
         upstreamCalled: false,
         path,
         promptText: k.prompt,
-        matchedSnippet: null,
+        matchedSnippet: k.snippet || null,
       });
     } else {
       rows.push({
@@ -112,9 +152,40 @@ export function mockMeta(): Meta {
   };
 }
 
+// A synthetic "just-detected" block whose id rolls over every 20s, so the live
+// alert (toast + panel + optional beep) visibly fires in mock mode without a
+// real proxy. It is added only to the events feed/detail, NOT to mockStats, so
+// the KPI numbers don't flicker — the point is to demo the alert, not the counts.
+function liveBucket(now: number): number {
+  return Math.floor(now / 20000);
+}
+
+function liveBlockFor(bucket: number): EventRow {
+  const k = BLOCK_KINDS[bucket % BLOCK_KINDS.length];
+  return {
+    eventId: `mock_live_${bucket}`,
+    createdAt: rfc3339(bucket * 20000),
+    decision: "BLOCK",
+    source: k.source,
+    reason: k.reason,
+    latencyMs: 40 + (bucket % 120),
+    modelName: "mock-data",
+    backend: "mock",
+    upstreamCalled: false,
+    path: "/v1/messages",
+    promptText: k.prompt,
+    matchedSnippet: k.snippet || null,
+  };
+}
+
 export function mockEvents(params: URLSearchParams): EventPage {
-  let rows = inRange(buildDataset(Date.now()), params.get("from"), params.get("to"));
+  const now = Date.now();
   const decision = params.get("decision");
+  let dataset = buildDataset(now);
+  if (!decision || decision === "BLOCK") {
+    dataset = [liveBlockFor(liveBucket(now)), ...dataset];
+  }
+  let rows = inRange(dataset, params.get("from"), params.get("to"));
   const source = params.get("source");
   const q = (params.get("q") || "").toLowerCase();
   if (decision) rows = rows.filter((r) => r.decision === decision);
@@ -127,6 +198,10 @@ export function mockEvents(params: URLSearchParams): EventPage {
 }
 
 export function mockEvent(id: string): EventRow | null {
+  if (id.startsWith("mock_live_")) {
+    const bucket = parseInt(id.slice("mock_live_".length), 10);
+    return isNaN(bucket) ? null : liveBlockFor(bucket);
+  }
   return buildDataset(Date.now()).find((r) => r.eventId === id) ?? null;
 }
 

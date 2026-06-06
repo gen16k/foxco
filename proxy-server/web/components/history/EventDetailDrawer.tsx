@@ -17,6 +17,29 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
+// Highlighted renders text with every (case-sensitive, exact) occurrence of
+// `snippet` wrapped in a red mark, so the sensitive span the proxy detected
+// stands out inside the full prompt. When the snippet is empty or not found
+// verbatim (e.g. an LFM-flagged segment that was normalized), the text renders
+// plainly — the snippet is still shown separately above.
+function Highlighted({ text, snippet }: { text: string; snippet: string | null }) {
+  if (!snippet || !text.includes(snippet)) return <>{text}</>;
+  const parts: React.ReactNode[] = [];
+  let i = 0;
+  let k = 0;
+  for (let idx = text.indexOf(snippet); idx !== -1; idx = text.indexOf(snippet, i)) {
+    if (idx > i) parts.push(text.slice(i, idx));
+    parts.push(
+      <mark key={k++} className="rounded-sm bg-block/30 px-0.5 font-semibold text-block">
+        {snippet}
+      </mark>,
+    );
+    i = idx + snippet.length;
+  }
+  if (i < text.length) parts.push(text.slice(i));
+  return <>{parts}</>;
+}
+
 function Detail({ row }: { row: EventRow }) {
   return (
     <div className="space-y-4">
@@ -44,7 +67,9 @@ function Detail({ row }: { row: EventRow }) {
 
       {row.matchedSnippet && (
         <div>
-          <dt className="mb-1 text-[11px] uppercase tracking-wide text-zinc-500">Matched snippet</dt>
+          <dt className="mb-1 text-[11px] uppercase tracking-wide text-zinc-500">
+            検知された箇所（センシティブ判定）
+          </dt>
           <pre className="overflow-x-auto rounded-md border border-block/40 bg-block/5 px-3 py-2 font-mono text-xs text-block">
             {row.matchedSnippet}
           </pre>
@@ -55,7 +80,7 @@ function Detail({ row }: { row: EventRow }) {
         <dt className="mb-1 text-[11px] uppercase tracking-wide text-zinc-500">Prompt (live turn)</dt>
         {row.promptText !== null ? (
           <pre className="max-h-[40vh] overflow-auto whitespace-pre-wrap break-words rounded-md border border-edge bg-ink px-3 py-2 font-mono text-xs text-zinc-200">
-            {row.promptText}
+            <Highlighted text={row.promptText} snippet={row.matchedSnippet} />
           </pre>
         ) : (
           <p className="rounded-md border border-warn/40 bg-warn/5 px-3 py-2 text-xs text-warn">
