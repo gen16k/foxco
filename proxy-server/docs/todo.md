@@ -1,5 +1,35 @@
 # TODO / Deferred Issues
 
+## LFM fail-closes on benign input (false-positive blocks)
+
+- Status: Open
+- Discovered: 20260606 (docs/records/20260606/2151-e2e-tool-call-coverage-and-robustness.md)
+
+### Detail
+
+The LFM2.5-1.2B occasionally returns a verdict the tolerant parser cannot read as a
+clean `ALLOW` for plainly benign input, so the proxy fail-closes to BLOCK. Observed
+in the e2e harness: a benign "What is 2+2?" turn was blocked with reason
+`inert data with no sensitive information` (the model reasoned it was benign, but the
+output didn't yield an `ALLOW` token). Nondeterministic across sidecar warm states.
+For sensitive content fail-closed is correct; for benign content it is a usability
+false positive.
+
+### Why deferred / Blocked by
+
+The e2e harness worked around it (the deterministic allow/block/sanitize sequence
+uses the rule guardrail; the LFM is asserted only in its reliable BLOCK-sensitive
+direction — `TestLFMBlocksSensitive`). The real fix is in the LFM I/O contract:
+stronger output constraint / grammar so a clean `ALLOW`/`BLOCK` token is always
+produced, or a more robust parse, possibly a fine-tuned model. Touches
+`internal/inference/profile.go` (PromptProfile) and the policy, so it needs
+deliberate design + an eval set, not an ad-hoc patch.
+
+### Unblock condition
+
+A benign-input eval (e.g. ordinary coding prompts) showing an acceptable
+false-positive rate after the I/O-contract change.
+
 ## Proxy blocks Claude Code's own injected context for subscription users
 
 - Status: Open
