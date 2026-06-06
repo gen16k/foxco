@@ -114,3 +114,40 @@ func TestForwarderForwardsHeadersAndBody(t *testing.T) {
 		t.Errorf("client body = %q", rec.Body.String())
 	}
 }
+
+func TestForwardRawPreservesMethodPathQueryAndHeaders(t *testing.T) {
+	var gotMethod, gotURI, gotKey, gotCustom string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotURI = r.URL.RequestURI()
+		gotKey = r.Header.Get("x-api-key")
+		gotCustom = r.Header.Get("X-Custom")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`models`))
+	}))
+	defer upstream.Close()
+
+	f := NewForwarder(upstream.URL, 5000)
+	rec := httptest.NewRecorder()
+	in := http.Header{}
+	in.Set("x-api-key", "sk-test")
+	in.Set("X-Custom", "keep-me")
+	in.Set("Connection", "keep-alive") // hop-by-hop: must be dropped
+
+	status, err := f.ForwardRaw(context.Background(), http.MethodGet, "/v1/models?limit=5", in, nil, rec)
+	if err != nil {
+		t.Fatalf("ForwardRaw: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Errorf("status = %d", status)
+	}
+	if gotMethod != http.MethodGet {
+		t.Errorf("method = %q, want GET", gotMethod)
+	}
+	if gotURI != "/v1/models?limit=5" {
+		t.Errorf("request URI = %q, want /v1/models?limit=5 (query preserved)", gotURI)
+	}
+	if gotKey != "sk-test" || gotCustom != "keep-me" {
+		t.Errorf("headers not preserved: x-api-key=%q X-Custom=%q", gotKey, gotCustom)
+	}
+}

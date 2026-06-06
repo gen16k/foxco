@@ -1,5 +1,69 @@
 # Decision Log
 
+## 結合テストは Windows Sandbox で実施する (20260606 22:30)
+
+### Status
+Accepted
+
+### Context
+
+透過インターセプションの結合テスト（実 hosts編集・`:443`バインド・CA信頼ストア導入・実
+`api.anthropic.com` アクセス）は、ホスト上で稼働中の Claude セッションを壊し得るため当初は
+保留していた。ユーザが使い捨て・NAT分離の **Windows Sandbox** を用意した。
+
+### Decision
+
+結合テストは Windows Sandbox 内でのみ実施する。ホストリポは read-only マップ、結果は read-write
+の共有フォルダ経由で回収。クライアントは schannel の `curl.exe`（マシン信頼ストア参照、`-k` 不使用）。
+無害な401プローブ（無効キー＋良性プロンプト、機密ゼロ）で実 API 到達を確認する。ハーネスは
+`test/sandbox/`（`run-sandbox.ps1` ホストランチャ + `run-tests.ps1` VM内オーケストレータ）、
+`install.ps1 -SkipBuild` でホストビルド済み exe を再利用（VM に Go 不要）。
+
+### Consequences
+
+- 32/32 PASS で機構を端から端まで実証（hostsリダイレクト→CA信頼→`:443`終端→DLP→`1.1.1.1`
+  バイパスで実API到達→透過→完全アンインストール）。ホストは無傷。
+- 発見した follow-up（`docs/todo.md`）：Claude Code(Node) は Windows 信頼ストアを見ない＝
+  `NODE_EXTRA_CA_CERTS` が要る／動的証明書に CRL/OCSP が無く schannel が失効確認で失敗する。
+- Windows Sandbox(GUI) は RDP 対話デスクトップが前面のときのみ起動成立、終了はウィンドウを
+  ×で閉じる（force-kill は VM ワーカー孤児化を招く）。
+
+### Related Records
+- docs/records/20260606/2230-sandbox-integration-test.md
+
+## 透過HTTPSインスペクションを既定の接続方式にする (20260606 21:01)
+
+### Status
+Accepted
+
+### Context
+
+従来は `ANTHROPIC_BASE_URL=http://127.0.0.1:8787`（env var → 平文HTTP）でのみ捕捉していた。設定を忘れやすく回避も容易なため、`api.anthropic.com` をネットワーク層（hostsファイル + HTTPSインスペクション）で**既定捕捉**する仕組みを追加する。要件確認は grill-me で実施。
+
+### Decision
+
+1. **両モード併存・既定=透過HTTPS**。env var(HTTP) モードはフォールバックとして残す（`mode: transparent|proxy|both`）。
+2. **捕捉対象は `api.anthropic.com` のみ**（プロンプト本文を運ぶ唯一のホスト）。`intercept.hosts` で設定可能。
+3. **ループバック回避**：上流転送は hosts を無視する独自リゾルバ（既定 `1.1.1.1:53`）で実IP解決。SNI は `api.anthropic.com` のままで実証明書を検証（`internal/upstreamdial`）。
+4. **Windows サービス**（Session 0, LocalSystem）として常駐し、hosts編集 + `:443` TLS終端 + CA署名 + 転送を担う。
+5. **GPUサイドカーはユーザセッション**でログオンタスクから起動（Session 0 では iGPU 不可）。proxy は `127.0.0.1:8791` に接続し、未起動時は fail-closed。
+6. **非メッセージパスは透過パススルー**（DLPは `/v1/messages`・`count_tokens` のみ）。パススルーはメソッド+パスのみ監査記録（本文不記録）し、黙示バイパスにしない。
+7. **サービスは自動起動**。サイドカーはログオンタスク。
+8. **ウォームアップ中は fail-closed**。ただしコンテンツブロックと区別し「分類器が起動中。数秒後に再実行」という専用メッセージを返す。
+9. **ルートCAは Name Constraints（`anthropic.com`）で制限**。鍵漏洩時も他サイトのなりすましに使えない（`internal/mitm`）。
+
+実装: `internal/{mitm,upstreamdial,hostsfile}` 追加、`internal/config`（mode/intercept/tls/upstream.resolver_dns、データパスを `%ProgramData%` へ移設）、`internal/anthropic`（hostsバイパス transport + `ForwardRaw`）、`internal/proxy`（catch-all パススルー + ウォームアップ専用応答）、`cmd/proxy`（サービスモード + 443/8787 デュアルリスナ + `-init-ca`）、`install.ps1`/`uninstall.ps1`/`proxyctl.ps1`、`start.ps1 -SidecarOnly`。
+
+### Consequences
+
+- env var を設定しなくても Claude Code が既定で proxy を経由する。advisory から「回避しにくい」方向へ一歩前進（ただし管理者権限のあるユーザは依然解除可能で、改ざん耐性は非目標のまま）。
+- ルートCAを信頼ストアへ導入するため、Windows Defender/AV が hosts編集やルート追加を検知する可能性がある（要許可、自動抑制しない）。
+- 透過モードの結合テスト（実 hosts編集 + 443 + CA導入 + 実API）は、稼働中の Claude セッションを壊し得るため**ユーザ指示時のみ**実施。単体テストは全て hermetic。
+- パススルー経路は明示的な DLP カバレッジ外（`docs/todo.md`）。
+
+### Related Records
+- docs/records/20260606/2101-transparent-https-interception.md
+
 ## 管理UI向けオプトイン生プロンプト保存 + 読み取り専用 admin API (20260606 21:20)
 
 ### Status

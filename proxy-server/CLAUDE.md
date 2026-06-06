@@ -56,14 +56,17 @@ claude
 
 | Path | Responsibility |
 |------|----------------|
-| `cmd/proxy` | entrypoint, config + classifier wiring, HTTP server |
-| `internal/proxy` | request flow handler (parse → evaluate → sanitize → forward) |
-| `internal/anthropic` | Messages API types (round-trip safe), block response, SSE, forwarder |
+| `cmd/proxy` | entrypoint, config + classifier wiring, dual listeners, Windows service (`service_windows.go`) |
+| `internal/proxy` | request flow handler (parse → evaluate → sanitize → forward) + catch-all passthrough |
+| `internal/anthropic` | Messages API types (round-trip safe), block response, SSE, forwarder (`ForwardRaw` for passthrough) |
 | `internal/dlp` | normalize, segment, rule guardrail, cache, LFM detector/policy |
 | `internal/inference` | llama.cpp client (LFM) + keyword fallback classifier + `PromptProfile` |
 | `internal/sanitizer` | structure-aware history unit removal + validation |
 | `internal/storage` | SQLite audit log (no raw text / secrets) |
 | `internal/config` | YAML config + safe defaults |
+| `internal/mitm` | transparent mode: Name-Constrained root CA + on-the-fly leaf certs |
+| `internal/upstreamdial` | transparent mode: hosts-bypassing transport so the forward reaches the real upstream |
+| `internal/hostsfile` | transparent mode: crash-safe hosts-file redirect block (add on start / remove on stop) |
 | `config` | example config (`config.example.yaml`) |
 | `web` | admin / demo UI (placeholder; future scope) |
 | `docs` | design spec + work records / knowledge / decisions / todo (see below) |

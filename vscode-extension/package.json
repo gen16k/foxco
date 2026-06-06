@@ -1,0 +1,123 @@
+{
+  "name": "promptgate",
+  "displayName": "PromptGate",
+  "description": "Local LFM guardrails before your prompt reaches the cloud — powered by LFM2.5-1.2B-JP",
+  "version": "0.1.0",
+  "publisher": "foxco",
+  "engines": { "vscode": "^1.90.0" },
+  "categories": ["Other"],
+  "keywords": ["security", "privacy", "LLM", "DLP", "prompt", "guardrail"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "promptgate.startProxy",
+        "title": "PromptGate: プロキシサーバを起動する",
+        "icon": "$(play)"
+      },
+      {
+        "command": "promptgate.stopProxy",
+        "title": "PromptGate: プロキシサーバを停止する",
+        "icon": "$(stop)"
+      },
+      {
+        "command": "promptgate.openTerminal",
+        "title": "PromptGate: Guard 有効ターミナルを開く",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "promptgate.openAdminUI",
+        "title": "PromptGate: 管理UIをブラウザで開く",
+        "icon": "$(browser)"
+      },
+      {
+        "command": "promptgate.refreshLog",
+        "title": "更新",
+        "icon": "$(refresh)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "promptgate",
+          "title": "PromptGate",
+          "icon": "media/shield.svg"
+        }
+      ]
+    },
+    "views": {
+      "promptgate": [
+        {
+          "id": "promptgate.status",
+          "name": "ガード状態"
+        },
+        {
+          "id": "promptgate.activityLog",
+          "name": "検知ログ"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "promptgate.refreshLog",
+          "when": "view == promptgate.activityLog",
+          "group": "navigation"
+        },
+        {
+          "command": "promptgate.startProxy",
+          "when": "view == promptgate.status",
+          "group": "navigation@1"
+        },
+        {
+          "command": "promptgate.openTerminal",
+          "when": "view == promptgate.status",
+          "group": "navigation@2"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "PromptGate",
+      "properties": {
+        "promptgate.proxyAddr": {
+          "type": "string",
+          "default": "127.0.0.1:8787",
+          "description": "PromptGate Go プロキシのアドレス (host:port)"
+        },
+        "promptgate.adminUiUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:3939",
+          "description": "管理UIのURL"
+        },
+        "promptgate.pollIntervalMs": {
+          "type": "number",
+          "default": 3000,
+          "description": "ログポーリング間隔 (ms)"
+        },
+        "promptgate.autoStartProxy": {
+          "type": "boolean",
+          "default": false,
+          "description": "VSCode起動時にプロキシを自動起動する (start.ps1)"
+        },
+        "promptgate.classifier": {
+          "type": "string",
+          "default": "",
+          "enum": ["", "keyword"],
+          "enumDescriptions": ["LFM (llama.cpp sidecar)", "キーワードフォールバック (モデル不要)"],
+          "description": "起動時の分類器。keyword = LFMなしで確定的ルール判定"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.90.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0"
+  }
+}
