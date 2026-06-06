@@ -1,0 +1,55 @@
+# Local LFM DLP Proxy — example configuration.
+# Copy to %LOCALAPPDATA%\LocalLfmDlpProxy\config.yaml and edit as needed.
+
+server:
+  # Bind localhost only. Do not expose to the LAN.
+  listen_addr: "127.0.0.1:8787"
+
+upstream:
+  base_url: "https://api.anthropic.com"
+  timeout_ms: 60000
+
+dlp:
+  # On classifier failure/timeout, block rather than allow egress.
+  fail_closed: true
+  # CPU LFM inference can spike past 1.5s on a cold/idle prompt cache; too tight
+  # a timeout fail-closes benign requests. 8s is generous headroom for CPU
+  # (warm calls are ~200-300ms). Lower it for GPU/NPU.
+  classify_timeout_ms: 8000
+  block_response_mode: "assistant_message"
+  rule_guardrail:
+    # Deterministic secret/API-key guardrail. The LFM remains the primary
+    # classifier; this is the insurance layer for blatant credential leaks.
+    enabled: true
+
+inference:
+  # MVP backend: a llama.cpp server (llama-server) exposing the OpenAI-compatible
+  # chat API. Set type to "keyword" to run without a model (dev/CI/demo fallback).
+  type: "llama_cpp_http"
+  endpoint: "http://127.0.0.1:8791"
+  model: "LFM2.5-1.2B"
+  warmup_on_start: true
+  health_timeout_ms: 500
+  # LFM I/O contract (prompt + schema + output parsing). Swap this when a
+  # fine-tuned model expects a different format. Built-ins: "reason_decision"
+  # (default), "ng_boolean". Register more in internal/inference/profile.go.
+  profile: "reason_decision"
+  # Optional: override just the profile's system prompt from a file (handy while
+  # iterating on a fine-tuned model without rebuilding).
+  # system_prompt_file: "C:\\path\\to\\system_prompt.txt"
+
+cache:
+  # fingerprint -> decision LRU, so each segment is classified once.
+  enabled: true
+  max_entries: 4096
+  persist_sqlite: false
+
+storage:
+  type: "sqlite"
+  path: "%LOCALAPPDATA%\\LocalLfmDlpProxy\\state\\dlp.db"
+  store_raw_text: false        # never persist raw content / secrets
+  retention_days: 30
+
+logging:
+  level: "info"
+  redact_sensitive_values: true

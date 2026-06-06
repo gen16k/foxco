@@ -1,0 +1,16 @@
+# Build artifacts
+/proxy.exe
+/inference-adapter.exe
+*.exe
+
+# Local LFM models (large; download separately)
+/models/
+
+# Local state / audit DB
+*.db
+*.db-journal
+*.db-wal
+state/
+
+# Runtime logs (proxy / llama-server)
+*.log
