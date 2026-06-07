@@ -1,4 +1,4 @@
-# jp_confidential_extraction：システムプロンプトを廃止（チューニング前提に整合） (20260607 14:11) #TBD
+# jp_confidential_extraction：システムプロンプトを廃止（チューニング前提に整合） (20260607 14:11) #e2e7f02
 
 ## Motivation
 
