@@ -24,6 +24,7 @@ Accepted
 - docs/records/20260607/1320-use-upstream-gguf.md
 
 ## サービス一元ライフサイクル: サイドカー/UI はユーザセッションタスク経由 (20260607 12:10)
+## 管理UI「Network Flow」タブの 3D 可視化に react-three-fiber を採用 (20260607 12:53)
 
 ### Status
 Accepted
@@ -58,6 +59,36 @@ proxy は引き続き Windows サービス（hosts/`:443`/CA に LocalSystem 権
 
 ### Related Records
 - docs/records/20260607/1210-promptgate-service-lifecycle-rename.md
+クライアント → PromptGate → Claude のパケットフローを NIRVANA 風に可視化する新タブを
+ユーザーが要望。描画方式について SVG/Canvas/擬似3D/本格3D を提示し、ユーザーは
+「3Dチックな感じ」を希望のうえ **react-three-fiber（本格3D/WebGL）** を選択。
+別途「負荷が問題なら擬似3Dでも可」との緩和指示もあった。admin UI(Next.js)に
+3D ライブラリ（three.js 系）という比較的大きな新規依存を持ち込む判断。
+
+### Decision
+
+- 3D は `three` + `@react-three/fiber@8`（React 18 系では v8 必須、v9 は React 19 要求）
+  + `@react-three/drei@9` + `@react-three/postprocessing@2`（bloom）。`@types/three` も追加。
+  いずれも repo 流儀に合わせ exact pin。
+- `<Canvas>` は `next/dynamic({ ssr:false })` でクライアント限定遅延ロードし、SSR を回避
+  しつつ three を他ルートのバンドルから排除（`/network` の First Load JS は他タブと同等）。
+- 負荷対策: 全パケットを単一 `instancedMesh` で描画（1 draw call）、`MAX_PACKETS` 上限、
+  毎フレーム setState ゼロ（packet store は ref ベース）、`dpr` 上限、タブ非表示時
+  `frameloop="never"`、reduced-motion で発光/自動回転を抑制。
+- degrade: データ/オーケストレーション層をレンダラ非依存（`lib/topology-packets.ts`）にし、
+  WebGL 不可時/シーン例外時は CSS perspective の擬似3D `StaticFallback` へ自動切替。
+  将来 3D が重ければ同じ store で擬似3Dへ差し替え可能。
+
+### Consequences
+
+- admin UI 依存が ~0.6–1MB(gz) 増えるが遅延ロードのため初期表示・他タブは不変。
+- React 18 固定のため R3F は v8 系に固定（v9 へ上げる場合は React 19 移行とセット）。
+- DLP/proxy のセキュリティ不変条件には影響しない（読み取り専用 admin API の表示層のみ）。
+- 本リポジトリの admin UI は ESLint 未設定のため lint 検証はスキップ（`docs/todo.md`）。
+  検証は typecheck + build + dev(mock) スモークで実施。
+
+### Related Records
+- docs/records/20260607/1253-network-flow-tab.md
 
 ## 明示的ユーザーバイパスマーカー（誤検知の手動回避）+ admin の BYPASS 表示 (20260607 11:46)
 

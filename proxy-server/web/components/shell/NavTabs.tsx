@@ -7,6 +7,7 @@ import clsx from "clsx";
 const TABS = [
   { href: "/", label: "Overview" },
   { href: "/history", label: "Prompt History" },
+  { href: "/network", label: "Network Flow" },
 ];
 
 export function NavTabs() {
