@@ -121,6 +121,38 @@ func TestEvaluateHistoryNG(t *testing.T) {
 	}
 }
 
+// errOnClassifier errors only for segments whose text contains trigger and
+// allows everything else — simulating the sidecar timing out on one (e.g. large)
+// history segment while a smaller live turn was served fine.
+type errOnClassifier struct{ trigger string }
+
+func (e errOnClassifier) Classify(_ context.Context, in ClassifyInput) (ClassifyOutput, error) {
+	if e.trigger != "" && contains(in.Text, e.trigger) {
+		return ClassifyOutput{}, errors.New("classifier timeout")
+	}
+	return ClassifyOutput{NG: false}, nil
+}
+
+func TestEvaluateHistoryClassifierUnavailableFailsClosed(t *testing.T) {
+	// A benign live turn, but a history segment the classifier cannot vet (sidecar
+	// warming / timeout). This must fail closed as a whole-request
+	// classifier-unavailable block, NOT be reported as sensitive HistoryNG (which
+	// would mislabel it "history has secrets" and could silently drop a benign
+	// unit during sanitization).
+	d := newDet(errOnClassifier{trigger: "coldseg"}, true)
+	segs := []Segment{
+		{Type: SegToolResult, Text: "earlier coldseg output", MsgIndex: 0, ToolUseID: "tu_1"},
+		{Type: SegUserText, Text: "a safe new question", MsgIndex: 4},
+	}
+	ev := d.Evaluate(context.Background(), segs, 4)
+	if !ev.Block || ev.BlockSource != SourceClassifierUnavailable {
+		t.Fatalf("history classifier-unavailable must fail closed, got %+v", ev)
+	}
+	if len(ev.HistoryNG) != 0 {
+		t.Fatalf("unvetted history must not be reported as sensitive NG: %+v", ev.HistoryNG)
+	}
+}
+
 func TestEvaluateHistoryOnlySkipsLiveTurn(t *testing.T) {
 	// The live turn carries a "secret" the classifier would flag, but
 	// EvaluateHistoryOnly must not classify it (the bypass path forwards it).
