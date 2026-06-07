@@ -2,6 +2,8 @@
 
 Purpose: show that PromptGate improves over baseline models on the same fixed evaluation set.
 
+Tagline: PromptGate — A local LFM guard that blocks sensitive prompts before they reach cloud LLMs.
+
 ## Current W&B Usage
 
 For evaluation, W&B should be table-first.
@@ -38,11 +40,12 @@ Compared models:
 
 ## Final Run
 
-When the fine-tuned model is ready, create a final run with three rows:
+Create a final run with three to four rows:
 
 - `LiquidAI/LFM2-350M-PII-Extract-JP-GGUF`
 - `LiquidAI/LFM2.5-1.2B-JP-GGUF`
-- `PromptGate fine-tuned LFM2.5-1.2B-JP`
+- `akiFQC/LFM2-350M-Conf-Extract-Japanese` for the previous 350M fine-tuned model
+- `akiFQC/LFM2.5-1.2B-JP-202606-Conf-Extract`
 
 ## Reproduce
 

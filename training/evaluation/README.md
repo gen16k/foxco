@@ -2,6 +2,8 @@
 
 This folder contains the reproducible evaluation pipeline for PromptGate.
 
+Tagline: PromptGate — A local LFM guard that blocks sensitive prompts before they reach cloud LLMs.
+
 The evaluation is a fixed-set model comparison, not a training curve. W&B is therefore used mainly for tables, not step-based graphs.
 
 ## Files
@@ -32,6 +34,18 @@ The main W&B artifact is `model_comparison`.
 The `examples` table stores prompts, ground truth, normalized predictions, and schema validity for inspection.
 
 Detailed precision/recall/F1 metrics are kept in the local metrics JSON and W&B artifact, but they are not the primary demo view.
+
+## Fine-Tuned Model Status
+
+Fine-tuned PromptGate model link:
+
+https://huggingface.co/akiFQC/LFM2.5-1.2B-JP-202606-Conf-Extract
+
+Previous 350M fine-tuned model for comparison:
+
+https://huggingface.co/akiFQC/LFM2-350M-Conf-Extract-Japanese
+
+These are Transformers/Safetensors models, not GGUF/Ollama models. The current baseline runner (`run_ollama_baselines.py`) only evaluates local Ollama models, so the fine-tuned models need a separate Transformers inference path or GGUF conversion before they can be added to `model_comparison`.
 
 ## Current Evaluation Limitations
 

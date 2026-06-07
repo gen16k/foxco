@@ -1,7 +1,7 @@
 {
   "name": "promptgate",
   "displayName": "PromptGate",
-  "description": "Local LFM guardrails before your prompt reaches the cloud — powered by LFM2.5-1.2B-JP",
+  "description": "A local LFM guard that blocks sensitive prompts before they reach cloud LLMs.",
   "version": "0.1.0",
   "publisher": "foxco",
   "engines": { "vscode": "^1.90.0" },

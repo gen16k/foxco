@@ -40,7 +40,8 @@ ENTITY_KEYS = [
 MODEL_DISPLAY_NAMES = {
     "past_pii": "LiquidAI/LFM2-350M-PII-Extract-JP-GGUF",
     "base_lfm25": "LiquidAI/LFM2.5-1.2B-JP-GGUF",
-    "promptgate_ft": "PromptGate fine-tuned LFM2.5-1.2B-JP",
+    "conf_extract_350m": "akiFQC/LFM2-350M-Conf-Extract-Japanese",
+    "promptgate_ft": "akiFQC/LFM2.5-1.2B-JP-202606-Conf-Extract",
 }
 
 

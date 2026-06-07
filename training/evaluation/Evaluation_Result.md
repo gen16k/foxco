@@ -4,6 +4,8 @@ Status: validation-10 random baseline evaluation completed
 
 Last run: 2026-06-07 JST
 
+Tagline: PromptGate — A local LFM guard that blocks sensitive prompts before they reach cloud LLMs.
+
 W&B run:
 
 https://wandb.ai/aki310-sony-semiconductors/promptgate/runs/k25spzc0
@@ -30,7 +32,8 @@ Compared models:
 
 - `LiquidAI/LFM2-350M-PII-Extract-JP-GGUF`
 - `LiquidAI/LFM2.5-1.2B-JP-GGUF`
-- `PromptGate fine-tuned LFM2.5-1.2B-JP` (not evaluated yet)
+- `akiFQC/LFM2-350M-Conf-Extract-Japanese` (previous fine-tuned 350M model, not evaluated yet)
+- `akiFQC/LFM2.5-1.2B-JP-202606-Conf-Extract` (fine-tuned PromptGate model, not evaluated yet)
 
 ## Evaluation Limitations
 
@@ -49,7 +52,8 @@ This is the main table to show in W&B and slides.
 | --- | ---: | ---: | ---: | ---: | ---: |
 | `LiquidAI/LFM2-350M-PII-Extract-JP-GGUF` | 10 | 2 | 59 | 18 | 0.31 |
 | `LiquidAI/LFM2.5-1.2B-JP-GGUF` | 10 | 0 | 59 | 16 | 0.27 |
-| `PromptGate fine-tuned LFM2.5-1.2B-JP` | TBD | TBD | TBD | TBD | TBD |
+| `akiFQC/LFM2-350M-Conf-Extract-Japanese` | TBD | TBD | TBD | TBD | TBD |
+| `akiFQC/LFM2.5-1.2B-JP-202606-Conf-Extract` | TBD | TBD | TBD | TBD | TBD |
 
 Definitions:
 
@@ -84,4 +88,4 @@ uv run --with wandb python training\evaluation\evaluate_and_log_wandb.py --input
 
 ## Next Step
 
-Run the fine-tuned PromptGate model on the same `validation_10_eval.jsonl` and add it as the third row in W&B `model_comparison`.
+Run the final fine-tuned LFM2.5 model on the same `validation_10_eval.jsonl` and add it to W&B `model_comparison`.

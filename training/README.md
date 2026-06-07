@@ -2,6 +2,8 @@
 
 This folder contains PromptGate training, evaluation, and model comparison assets.
 
+Tagline: PromptGate — A local LFM guard that blocks sensitive prompts before they reach cloud LLMs.
+
 PromptGate uses `LFM2.5-1.2B-JP-202606` as a local guard model that detects sensitive information before a prompt is sent to a cloud LLM.
 
 ## Dataset
@@ -32,7 +34,8 @@ All keys are required. Values must be arrays. Empty categories must be `[]`.
 
 - `LiquidAI/LFM2-350M-PII-Extract-JP-GGUF`
 - `LiquidAI/LFM2.5-1.2B-JP-GGUF`
-- `PromptGate fine-tuned LFM2.5-1.2B-JP` (to be added)
+- `akiFQC/LFM2-350M-Conf-Extract-Japanese` (previous fine-tuned 350M model, comparison target)
+- `akiFQC/LFM2.5-1.2B-JP-202606-Conf-Extract` (fine-tuned PromptGate model, not evaluated in this repo yet)
 
 ## Current Evaluation
 
@@ -63,6 +66,6 @@ uv run --with wandb python training\evaluation\evaluate_and_log_wandb.py --input
 
 ## Next Tasks
 
-- Add `PromptGate fine-tuned LFM2.5-1.2B-JP` outputs to the same evaluation JSONL.
-- Re-run evaluation so the W&B `model_comparison` table has three rows.
+- Add the previous fine-tuned model `akiFQC/LFM2-350M-Conf-Extract-Japanese` as a comparison row, if time allows.
+- Add `akiFQC/LFM2.5-1.2B-JP-202606-Conf-Extract` outputs and re-run evaluation.
 - Select demo cases where the fine-tuned model catches entities missed by the baselines.
