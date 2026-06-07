@@ -1,5 +1,22 @@
 # TODO / Deferred Issues
 
+## admin UI に ESLint 設定がコミットされていない
+
+- Status: Open
+- Discovered: 20260607 (docs/records/20260607/1253-network-flow-tab.md)
+
+### Detail
+
+`web/package.json` に `lint` スクリプト（`next lint`）と `eslint-config-next` 依存はあるが、
+`.eslintrc*` / `eslint.config.*` がリポジトリに無く、`next lint` が対話セットアップを促して
+非対話実行ではブロックする。結果 `npm run lint` がリポジトリ全体で機能しない。
+
+### Why deferred / Blocked by
+
+eslint 設定の新規導入は全 admin UI ファイルに影響し、Network Flow タブの追加とはスコープが別。
+Network Flow は typecheck + build + dev(mock) スモークで検証済み。`.eslintrc.json`（例:
+`{ "extends": "next/core-web-vitals" }`）を別変更として追加すれば解消する。
+
 ## 抽出プロファイルのブロック対象カテゴリを構成可能にする
 
 - Status: Open
