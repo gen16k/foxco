@@ -217,15 +217,19 @@ func parseNGBoolean(content string) (dlp.ClassifyOutput, error) {
 //     no verdict field for an injection to flip — the worst case is a missed
 //     entity (false negative), which the deterministic rule guardrail and
 //     fail-closed still backstop. Confirmed with the user; see docs/decisions.md.
-//   - System is the dataset's Japanese instruction, byte-exact (a 1.2B model is
-//     sensitive to full/half-width punctuation and newlines). Pin the deployed
-//     checkpoint's exact prompt via inference.system_prompt_file if it drifts.
+//   - No system prompt: this checkpoint is fine-tuned to extract from the raw user
+//     turn alone (the instruction is baked into the weights), so System is empty
+//     and the client omits the system message entirely. Sending the dataset
+//     instruction would be off-distribution. Pin one via inference.system_prompt_file
+//     only if a future checkpoint needs it.
 // ---------------------------------------------------------------------------
 
 func jpConfidentialExtractionProfile() PromptProfile {
 	return PromptProfile{
-		Name:      "jp_confidential_extraction",
-		System:    jpConfidentialExtractionSystem,
+		Name: "jp_confidential_extraction",
+		// System intentionally empty — see the profile comment above. An empty
+		// System makes the client send no system message at all.
+		System:    "",
 		Schema:    jpConfidentialExtractionSchema,
 		BuildUser: jpExtractionBuildUser,
 		Parse:     parseJPConfidentialExtraction,
@@ -249,27 +253,6 @@ var jpExtractionSensitiveCategories = []string{
 // dataset's user turn (plain text, no delimiters, no metadata). See the profile
 // comment for why the inert-data wrapper is intentionally omitted here.
 func jpExtractionBuildUser(in dlp.ClassifyInput) string { return in.Text }
-
-// jpConfidentialExtractionSystem is the dataset's system prompt, copied byte-exact
-// from akiFQC/japanese-confidential-information-extraction-sft (constant across all
-// rows). Do not reword: the fine-tuned model is conditioned on these exact bytes.
-const jpConfidentialExtractionSystem = `あなたはテキストから社外秘の固有表現を抽出するアシスタントです。入力テキストを分析し、以下の11カテゴリの機密情報を抽出して、必ずJSON形式のみで出力してください。
-
-カテゴリ定義:
-- address: 住所・所在地
-- company_name: 企業・研究機関・組織名
-- email_address: メールアドレス
-- human_name: 人名
-- phone_number: 電話番号
-- account_identifier: アカウント識別子（ユーザーID・アカウント名・従業員番号・社会保障番号・マイナンバー等）
-- network_identifier: ネットワーク識別情報（IPアドレス・MACアドレス・内部ドメイン・ホスト名）
-- system_config: システム構成情報（ファイルパス・ディレクトリ構造・DBテーブル/カラム名）
-- project_info: プロジェクト関連情報（プロジェクト名・開発コードネーム・未発表の製品/機能名）
-- financial_info: 金額・財務情報（売上・原価・利益率・契約金額・個人の給与/報酬額）
-- transaction_id: 取引管理番号（契約書番号・請求書番号・見積書番号・顧客管理ID）
-
-出力形式（全キーを必ず含め、該当なしは空リスト）:
-{"address": [], "company_name": [], "email_address": [], "human_name": [], "phone_number": [], "account_identifier": [], "network_identifier": [], "system_config": [], "project_info": [], "financial_info": [], "transaction_id": []}`
 
 var jpConfidentialExtractionSchema = json.RawMessage(`{
   "type": "object",
