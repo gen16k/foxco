@@ -24,6 +24,14 @@ const defaultMaxBody = 32 << 20 // 32 MiB
 // is enabled, so one giant prompt can't bloat the audit DB.
 const maxPromptBytes = 16 << 10 // 16 KiB
 
+// BypassConfig is the explicit user-override marker policy. When Enabled and the
+// latest user message contains Marker, that turn is forwarded without DLP
+// blocking and audited as a distinct BYPASS decision (see bypass.go).
+type BypassConfig struct {
+	Enabled bool
+	Marker  string
+}
+
 // Handler implements the proxy request flow.
 type Handler struct {
 	detector   *dlp.Detector
@@ -33,21 +41,23 @@ type Handler struct {
 	failClosed bool
 	modelName  string
 	backend    string
-	storeRaw   bool // persist the live-turn prompt (opt-in; off by default)
+	storeRaw   bool         // persist the live-turn prompt (opt-in; off by default)
+	bypass     BypassConfig // explicit user override marker
 	maxBody    int64
 }
 
 // New builds a Handler. storeRaw enables persisting the live user-turn prompt to
 // the audit DB (store_raw_text); it is off by default and intentionally relaxes
-// the "never persist raw content" invariant for the local admin UI.
-func New(d *dlp.Detector, f *anthropic.Forwarder, audit storage.Recorder, log *slog.Logger, failClosed bool, modelName, backend string, storeRaw bool) *Handler {
+// the "never persist raw content" invariant for the local admin UI. bypass
+// configures the explicit user override marker.
+func New(d *dlp.Detector, f *anthropic.Forwarder, audit storage.Recorder, log *slog.Logger, failClosed bool, modelName, backend string, storeRaw bool, bypass BypassConfig) *Handler {
 	if audit == nil {
 		audit = storage.NopRecorder{}
 	}
 	return &Handler{
 		detector: d, forwarder: f, audit: audit, log: log,
 		failClosed: failClosed, modelName: modelName, backend: backend,
-		storeRaw: storeRaw, maxBody: defaultMaxBody,
+		storeRaw: storeRaw, bypass: bypass, maxBody: defaultMaxBody,
 	}
 }
 
@@ -106,7 +116,23 @@ func (h *Handler) process(w http.ResponseWriter, r *http.Request, isCount bool) 
 	// every request. It is persisted only when store_raw_text is enabled.
 	liveText := h.liveTurnText(msgs)
 
-	eval := h.detector.Evaluate(r.Context(), segs, dlp.LastMessageIndex(msgs))
+	lastIdx := dlp.LastMessageIndex(msgs)
+
+	// Explicit user bypass: when the latest user turn carries the override
+	// marker, forward it without DLP blocking (both the rule guardrail and the
+	// classifier are skipped for this turn), but still sanitize previously
+	// sensitive history. Detection is a deterministic substring check on
+	// user-authored text only (never tool_result), so it cannot be triggered by
+	// inspected data — preserving the inert-data invariant. This deliberately
+	// relaxes "BLOCK means no egress" for the marked turn; it is advisory under
+	// the honest-mistake threat model and recorded as a distinct BYPASS decision.
+	if h.bypass.Enabled && lastIdx >= 0 && msgs[lastIdx].Role() == "user" &&
+		containsBypassMarker(msgs[lastIdx], h.bypass.Marker) {
+		h.bypassForward(w, r, req, msgs, segs, lastIdx, isCount, body, start)
+		return
+	}
+
+	eval := h.detector.Evaluate(r.Context(), segs, lastIdx)
 	if eval.Block {
 		h.recordBlock(start, eval.BlockReason, eval.BlockSource, r.URL.Path, liveText, eval.BlockMatch)
 		// Fail-closed because the classifier could not vet the content (warming /
@@ -160,6 +186,55 @@ func (h *Handler) forwardRaw(w http.ResponseWriter, r *http.Request, body []byte
 		return
 	}
 	h.recordAllow(start, status, true, r.URL.Path, "")
+}
+
+// bypassForward handles a request whose latest user turn carries the override
+// marker: it strips the marker, still sanitizes prior sensitive history, and
+// forwards upstream (including the count_tokens egress channel), recording a
+// BYPASS audit event. The live turn itself is never classified.
+func (h *Handler) bypassForward(w http.ResponseWriter, r *http.Request, req *anthropic.Request,
+	msgs []anthropic.Message, segs []dlp.Segment, lastIdx int, isCount bool, body []byte, start time.Time) {
+
+	// Remove the marker so Claude never sees it; keep it only if stripping would
+	// leave the message empty (rare: the message was just the marker).
+	stripBypassMarker(&msgs[lastIdx], h.bypass.Marker)
+	// Recompute the live-turn text after stripping so a persisted prompt (when
+	// store_raw_text is on) does not contain the marker.
+	liveText := msgs[lastIdx].FlatText()
+
+	out := msgs
+	if ng := h.detector.EvaluateHistoryOnly(r.Context(), segs, lastIdx); len(ng) > 0 {
+		sanitized, serr := sanitizer.Sanitize(msgs, ng)
+		if serr != nil {
+			// Cannot produce a structurally valid history: fail closed even on a
+			// bypass, rather than risk leaking previously blocked secrets.
+			h.recordBlock(start, "sanitize_failed", "sanitizer", r.URL.Path, liveText, "")
+			h.log.Warn("decision", "result", "BLOCK", "reason", "sanitize_failed", "latency_ms", since(start))
+			h.writeBlock(w, req, isCount,
+				"過去の履歴に機密情報が残っています。/clear で会話をリセットしてから再開してください。")
+			return
+		}
+		out = sanitized
+	}
+
+	// Best-effort rewrite (matches the normal sanitize path): on the practically
+	// impossible marshal failure we forward the original bytes unchanged.
+	if err := req.SetMessages(out); err == nil {
+		if nb, err := req.Marshal(); err == nil {
+			body = nb
+		}
+	}
+
+	status, ferr := h.forwarder.Forward(r.Context(), r.URL.Path, r.Header, body, w)
+	if ferr != nil {
+		http.Error(w, "upstream error", http.StatusBadGateway)
+		h.recordBypass(start, 0, false, r.URL.Path, liveText)
+		h.log.Warn("upstream_error", "err", ferr.Error())
+		return
+	}
+	h.recordBypass(start, status, true, r.URL.Path, liveText)
+	h.log.Warn("decision", "result", "BYPASS", "reason", "user_bypass_marker",
+		"count_tokens", isCount, "upstream_status", status, "latency_ms", since(start))
 }
 
 // passthrough transparently relays any non-message path/method to the upstream.
@@ -224,6 +299,15 @@ func (h *Handler) recordBlock(start time.Time, reason, source, path, liveText, m
 		// secret span; lfm: the whole flagged segment). It is the secret value, so
 		// it is gated by the same opt-in as PromptText and never enters Details.
 		MatchedSnippet: h.snippetPtr(match),
+	})
+}
+
+func (h *Handler) recordBypass(start time.Time, status int, upstreamCalled bool, path, liveText string) {
+	_ = h.audit.Record(storage.AuditEvent{
+		EventID: anthropic.NewBlockID(), CreatedAt: now(), EventType: "request",
+		Decision: "BYPASS", LatencyMS: since(start), ModelName: h.modelName, Backend: h.backend,
+		UpstreamCalled: upstreamCalled, Details: safeBypassDetails(status), Path: path,
+		PromptText: h.promptPtr(liveText),
 	})
 }
 
@@ -306,6 +390,13 @@ func safeStatus(status int) string {
 
 func safePassthrough(method, path string, status int) string {
 	b, _ := json.Marshal(map[string]any{"method": method, "path": path, "upstream_status": status})
+	return string(b)
+}
+
+func safeBypassDetails(status int) string {
+	b, _ := json.Marshal(map[string]any{
+		"reason": "user_bypass_marker", "source": "user", "upstream_status": status,
+	})
 	return string(b)
 }
 

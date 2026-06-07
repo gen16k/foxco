@@ -149,6 +149,13 @@ func (m Message) Blocks() ([]Block, error) {
 	return out, nil
 }
 
+// SetStringContent writes a bare-string content value, preserving the
+// string-content shape (vs converting to a block array).
+func (m *Message) SetStringContent(s string) {
+	raw, _ := json.Marshal(s)
+	m.F["content"] = raw
+}
+
 // SetBlocks writes blocks back as an array content.
 func (m *Message) SetBlocks(blocks []Block) error {
 	arr := make([]json.RawMessage, 0, len(blocks))
@@ -209,6 +216,13 @@ func (b Block) Type() string { return rawString(b.F["type"]) }
 
 // Text returns the text of a text block.
 func (b Block) Text() string { return rawString(b.F["text"]) }
+
+// SetText replaces the text of a text block, preserving any other fields. Used
+// by the bypass path to strip the override marker before forwarding.
+func (b *Block) SetText(s string) {
+	raw, _ := json.Marshal(s)
+	b.F["text"] = raw
+}
 
 // ToolUseID returns the id of a tool_use block.
 func (b Block) ToolUseID() string { return rawString(b.F["id"]) }

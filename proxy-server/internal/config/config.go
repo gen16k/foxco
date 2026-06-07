@@ -64,10 +64,21 @@ type DLP struct {
 	ClassifyTimeoutMS int           `yaml:"classify_timeout_ms"`
 	BlockResponseMode string        `yaml:"block_response_mode"`
 	RuleGuardrail     RuleGuardrail `yaml:"rule_guardrail"`
+	Bypass            Bypass        `yaml:"bypass"`
 }
 
 type RuleGuardrail struct {
 	Enabled bool `yaml:"enabled"`
+}
+
+// Bypass configures the explicit user override marker. When Enabled and the
+// caller includes Marker in the latest user message, that turn is forwarded
+// without DLP blocking (rules + classifier) and audited as a distinct BYPASS
+// decision. It is an advisory escape hatch for obvious false positives, not a
+// security boundary — see the threat model in docs/spec-proxy.md.
+type Bypass struct {
+	Enabled bool   `yaml:"enabled"`
+	Marker  string `yaml:"marker"`
 }
 
 type Inference struct {
@@ -144,6 +155,7 @@ func Default() Config {
 			ClassifyTimeoutMS: 5000,
 			BlockResponseMode: "assistant_message",
 			RuleGuardrail:     RuleGuardrail{Enabled: true},
+			Bypass:            Bypass{Enabled: true, Marker: "#dlp-allow"},
 		},
 		Inference: Inference{
 			Type:            "llama_cpp_http",
@@ -186,6 +198,11 @@ func Load(path string) (Config, error) {
 		default:
 			return cfg, fmt.Errorf("read config: %w", err)
 		}
+	}
+	// An empty marker would substring-match every request, silently disabling
+	// DLP. Treat "enabled with no marker" as disabled.
+	if cfg.DLP.Bypass.Enabled && cfg.DLP.Bypass.Marker == "" {
+		cfg.DLP.Bypass.Enabled = false
 	}
 	cfg.expandPaths()
 	return cfg, nil

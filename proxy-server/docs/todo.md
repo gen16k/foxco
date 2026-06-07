@@ -171,6 +171,11 @@ output didn't yield an `ALLOW` token). Nondeterministic across sidecar warm stat
 For sensitive content fail-closed is correct; for benign content it is a usability
 false positive.
 
+Interim manual mitigation (20260607): the explicit bypass marker (`#dlp-allow`,
+docs/decisions.md, spec §9.5) lets a user force a falsely-blocked turn through,
+audited as `BYPASS`. It is a manual escape hatch, not the automatic fix this entry
+tracks, so this stays Open.
+
 ### Why deferred / Blocked by
 
 The e2e harness worked around it (the deterministic allow/block/sanitize sequence
@@ -202,6 +207,10 @@ session-title request. The LFM correctly classifies this as sensitive (commonly
 before egress. A real subscription user would see false-positive blocks on ordinary
 prompts.
 
+Interim manual mitigation (20260607): the explicit bypass marker (`#dlp-allow`,
+docs/decisions.md, spec §9.5) lets the user force such a turn through (audited as
+`BYPASS`). It does not auto-recognize Claude Code context, so this stays Open.
+
 See docs/knowledges/20260606/2100-claude-code-headless-multiturn-and-context-injection.md
 for the captured payloads.
 
@@ -213,3 +222,24 @@ user-authored content — e.g. recognize/allow known-benign Claude Code context
 blocks, exclude non-message metadata from classification, or document the
 constraint. Touches the DLP policy, so it must be designed deliberately, not patched
 ad hoc.
+
+## e2e coverage for the bypass marker
+
+- Status: Deferred
+- Discovered: 20260607 (docs/records/20260607/1146-dlp-bypass-marker.md)
+
+### Detail
+
+The bypass marker (`#dlp-allow`) is fully covered by handler-level unit tests
+against the mock upstream (forward+strip, full-bypass-over-rule, tool_result
+non-bypass, history-still-sanitized, count_tokens, audit `BYPASS`). A real-claude
+child e2e in `test/e2e/multiturn_test.go` would additionally confirm the marker
+survives Claude Code's real string-vs-block message construction end to end.
+
+### Why deferred / Blocked by
+
+Behavior is verified at the handler boundary the same way block/sanitize are. The
+e2e adds environment cost (a real `claude` child) for marginal extra confidence;
+add it alongside the next e2e change, gated like the existing real-child tests.
+(Note: this change also fixed a latent `-tags e2e` compile break — the e2e
+`proxy.New` call had not been updated when `storeRaw` was added.)

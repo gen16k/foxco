@@ -39,6 +39,8 @@ export function EventFilters() {
         <option value="">All decisions</option>
         <option value="BLOCK">BLOCK</option>
         <option value="ALLOW">ALLOW</option>
+        <option value="BYPASS">BYPASS</option>
+        <option value="PASSTHROUGH">PASSTHROUGH</option>
       </select>
       <select
         value={source}

@@ -1,5 +1,58 @@
 # Decision Log
 
+## 明示的ユーザーバイパスマーカー（誤検知の手動回避）+ admin の BYPASS 表示 (20260607 11:46)
+
+### Status
+Accepted
+
+### Context
+
+LFM/キーワード分類器は曖昧判定のため**明らかな誤検知**でブロックすることがある
+（docs/todo.md の「LFM fail-closes on benign input」「Proxy blocks Claude Code's own
+injected context」を参照）。現状の唯一の回避策は `ANTHROPIC_BASE_URL` を外す/プロキシを
+止めることで、**何が無検査で送られたかの監査記録が一切残らない**。本 proxy の脅威モデルは
+「正直な間違い／advisory・非タンパープルーフ」（ユーザーは env を外せばいつでも回避可能）で
+あり、回避自体は防げない。防げないなら**監査可能で範囲を限定した回避手段**を用意する方が
+安全、という判断。あわせて、バイパス発生時は admin UI が `ALLOW`/`BLOCK` と区別したフラグを
+表示する（ユーザー要望）。
+
+### Decision
+
+- 最新 user ターンの**ユーザー入力テキスト**にマーカー（既定 `#dlp-allow`、
+  `dlp.bypass.marker` で変更、`dlp.bypass.enabled` で無効化可）が含まれる場合、その
+  **ライブターンのみ** DLP ブロックを通過させる。
+- **スコープ＝フルバイパス**：ユーザー確認のうえ、LFM/キーワード分類器**だけでなく
+  確定ルールガードレール（AWS鍵・秘密鍵等）も**当該ターンではスキップする。
+- **履歴は引き続きサニタイズ**：マーカーはライブターンにのみ効き、過去ターンで
+  ブロック済みの機密は従来どおり除去してから転送する。
+- **検出は Go の決定的部分文字列一致**（LFM ではない）かつ**ユーザー入力テキスト
+  限定**（string content と `type:"text"` ブロックのみ。`tool_result`/ファイル内容は
+  対象外）。エージェントが読み込んだファイルにマーカーが混入しても DLP を無効化できない。
+- マーカーは転送前に**ストリップ**。空になる場合はそのまま転送（空 content の 400 回避）。
+- **監査は `BYPASS` 判定**（`upstream_called=true`、`details.reason="user_bypass_marker"`）。
+  admin UI の `DecisionBadge` を3状態化し BYPASS を専用色（amber）で表示、`EventFilters`
+  の decision フィルタにも追加（`PASSTHROUGH` も同時に区別表示）。
+- `count_tokens` も同経路でマーカー付きなら実カウントのため転送する。
+
+これは spec §1.1 で削除した HMAC `marker`（署名付き）の再導入では**ない**。
+`BlockNoticeSentinel` と同種の非署名 UX 目印である（spec §9.5）。
+
+### Consequences
+
+- CLAUDE.md の DLP 不変条件のうち「BLOCK は無 egress」「全 egress チャネルを検査」
+  「ルールガードレール」を、当該マーカー付きターンに限り**意図的に緩和**する。緩和は
+  オプトイン・ユーザー入力由来・config ゲート付き・`BYPASS` で監査される。
+- 誤検知時にユーザーが proxy を捨てずに送信を継続でき、かつ監査証跡が残る。
+- `#dlp-allow` はシェルコメント等と衝突しうる文字列のため、ユーザーが自分の入力に
+  偶発的に含めると意図せずバイパスし得る（大文字小文字は区別）。honest-mistake モデル
+  下では入力者本人が主体のため許容。気になる環境は `marker` を変更可能。
+- 付随修正: `proxy.New` に `storeRaw` が追加された際に未更新だった `test/e2e` の
+  `proxy.New` 呼び出し（`-tags e2e` でのみコンパイルされ通常CIに乗らず潜在的に破損）を
+  本変更の 9 引数化に合わせて修正した。
+
+### Related Records
+- docs/records/20260607/1146-dlp-bypass-marker.md
+
 ## jp_confidential_extraction プロファイルでは <<<DATA>>> ラッパを外す (20260607 01:38)
 
 ### Status

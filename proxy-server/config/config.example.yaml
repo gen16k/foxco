@@ -64,6 +64,23 @@ dlp:
     # Set to false for an LFM-only pipeline (the model becomes the sole
     # classifier); true keeps both layers (recommended in production).
     enabled: true
+  bypass:
+    # Explicit user override for obvious false positives. When enabled and the
+    # latest user message contains `marker`, that turn is forwarded WITHOUT DLP
+    # blocking (both the classifier AND the deterministic rule guardrail are
+    # skipped for that turn) and audited as a distinct `BYPASS` decision (shown
+    # as its own state in the admin UI). Scope is intentionally narrow:
+    #   - Only the live (latest) user-authored text is scanned for the marker —
+    #     never tool_result/file content, so a read file containing the marker
+    #     cannot silently disable DLP.
+    #   - Prior-turn history is still sanitized; previously-blocked secrets are
+    #     not re-sent.
+    #   - The marker is stripped before forwarding so Claude never sees it.
+    # This is advisory only (honest-mistake threat model): a user can already
+    # bypass entirely by unsetting ANTHROPIC_BASE_URL / stopping the proxy. Set
+    # enabled: false to remove the override; an empty marker also disables it.
+    enabled: true
+    marker: "#dlp-allow"
 
 inference:
   # MVP backend: a llama.cpp server (llama-server) exposing the OpenAI-compatible
