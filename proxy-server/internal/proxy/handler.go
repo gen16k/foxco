@@ -64,7 +64,8 @@ func New(d *dlp.Detector, f *anthropic.Forwarder, audit storage.Recorder, log *s
 // classifierWarmingMessage is shown when the request is fail-closed because the
 // LFM classifier is unavailable/warming (vs. an actual sensitive-content block),
 // so a transient startup state is not mistaken for a content block.
-const classifierWarmingMessage = "⏳ DLP分類器が起動中です（モデルのウォームアップ中、または分類器が応答しません）。数秒待ってから再実行してください。"
+const classifierWarmingMessage = "⏳ DLP分類器が起動中です（モデルのウォームアップ中、または分類器が応答しません）。数秒待ってから再実行してください。\n" +
+	"⏳ The DLP classifier is still starting up (model warming up, or the classifier is not responding). Please wait a few seconds and retry."
 
 // Register wires the handler onto the standard /v1/messages and count_tokens
 // routes (the DLP-inspected egress channels). count_tokens is treated as a
@@ -104,7 +105,8 @@ func (h *Handler) process(w http.ResponseWriter, r *http.Request, isCount bool) 
 		// Un-inspectable request: fail closed (block) rather than risk egress.
 		if h.failClosed {
 			h.recordBlock(start, "request_unparseable", "proxy", r.URL.Path, "", "")
-			h.writeBlock(w, req, isCount, "リクエストを解析できなかったため送信をブロックしました。")
+			h.writeBlock(w, req, isCount, "リクエストを解析できなかったため送信をブロックしました。\n"+
+				"The request could not be parsed, so it was blocked from being sent.")
 			return
 		}
 		h.forwardRaw(w, r, body, start)
@@ -138,7 +140,10 @@ func (h *Handler) process(w http.ResponseWriter, r *http.Request, isCount bool) 
 		// Fail-closed because the classifier could not vet the content (warming /
 		// sidecar down): no egress, but surface a distinct "starting up" message
 		// rather than a sensitive-content block so the user knows to just retry.
-		if eval.BlockSource == "classifier_unavailable" {
+		// This now also covers a history segment the classifier could not vet (see
+		// dlp.Evaluate): such a request fails closed here instead of being routed to
+		// the misleading "history has secrets" sanitize path below.
+		if eval.BlockSource == dlp.SourceClassifierUnavailable {
 			h.log.Info("decision", "result", "BLOCK", "reason", "classifier_unavailable",
 				"latency_ms", since(start))
 			h.writeBlock(w, req, isCount, classifierWarmingMessage)
@@ -156,7 +161,8 @@ func (h *Handler) process(w http.ResponseWriter, r *http.Request, isCount bool) 
 			h.recordBlock(start, "sanitize_failed", "sanitizer", r.URL.Path, liveText, "")
 			h.log.Warn("decision", "result", "BLOCK", "reason", "sanitize_failed", "latency_ms", since(start))
 			h.writeBlock(w, req, isCount,
-				"過去の履歴に機密情報が残っています。/clear で会話をリセットしてから再開してください。")
+				"過去の履歴に機密情報が残っています。/clear で会話をリセットしてから再開してください。\n"+
+					"Sensitive content remains in the conversation history. Run /clear to reset the conversation, then start over.")
 			return
 		}
 		if err := req.SetMessages(sanitized); err == nil {
@@ -211,7 +217,8 @@ func (h *Handler) bypassForward(w http.ResponseWriter, r *http.Request, req *ant
 			h.recordBlock(start, "sanitize_failed", "sanitizer", r.URL.Path, liveText, "")
 			h.log.Warn("decision", "result", "BLOCK", "reason", "sanitize_failed", "latency_ms", since(start))
 			h.writeBlock(w, req, isCount,
-				"過去の履歴に機密情報が残っています。/clear で会話をリセットしてから再開してください。")
+				"過去の履歴に機密情報が残っています。/clear で会話をリセットしてから再開してください。\n"+
+					"Sensitive content remains in the conversation history. Run /clear to reset the conversation, then start over.")
 			return
 		}
 		out = sanitized

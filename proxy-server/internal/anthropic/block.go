@@ -36,12 +36,13 @@ func NewBlockID() string {
 // externally, and embeds the self-identifying sentinel. See spec §9.4.
 func BlockText(reason string) string {
 	if reason == "" {
-		reason = "機密情報の可能性"
+		reason = "機密情報の可能性 / possible sensitive data"
 	}
-	return "⚠️ ローカルDLPにより、この入力は外部Claude APIへの送信をブロックしました。\n\n" +
-		"理由: " + reason + "\n\n" +
-		"機密情報を含む可能性があるため、内容は外部送信されていません。" +
-		"該当箇所を削除またはマスクしてから再度実行してください。\n\n" +
+	return "⚠️ ローカルDLPにより、この入力は外部Claude APIへの送信をブロックしました。\n" +
+		"⚠️ Local DLP blocked this input from being sent to the external Claude API.\n\n" +
+		"理由 / Reason: " + reason + "\n\n" +
+		"機密情報を含む可能性があるため、内容は外部送信されていません。該当箇所を削除またはマスクしてから再度実行してください。\n" +
+		"Nothing was sent externally. Remove or mask the flagged content, then try again.\n\n" +
 		BlockNoticeSentinel
 }
 

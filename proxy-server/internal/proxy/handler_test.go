@@ -264,6 +264,52 @@ func TestClassifierWarmingFailsClosedWithDistinctMessage(t *testing.T) {
 	}
 }
 
+// errOnTextClassifier errors only for segments containing trigger (simulating
+// the sidecar timing out on one history segment) and allows everything else.
+type errOnTextClassifier struct{ trigger string }
+
+func (e errOnTextClassifier) Classify(_ context.Context, in dlp.ClassifyInput) (dlp.ClassifyOutput, error) {
+	if e.trigger != "" && strings.Contains(in.Text, e.trigger) {
+		return dlp.ClassifyOutput{}, errors.New("sidecar timeout")
+	}
+	return dlp.ClassifyOutput{NG: false}, nil
+}
+
+// When the classifier is unavailable for a HISTORY segment (sidecar warming) but
+// the live turn is benign, the request must fail closed with the SAME distinct
+// "warming" message as a live-turn timeout — not the misleading "history has
+// secrets / /clear" block — and with no egress. Regression test for a fresh
+// first turn being blocked as "過去の履歴に機密情報が残っています" while the LFM
+// sidecar was still cold.
+func TestHistoryClassifierWarmingFailsClosedWithDistinctMessage(t *testing.T) {
+	up := newMockUpstream()
+	defer up.srv.Close()
+	det := dlp.NewDetector(dlp.NewRuleEngine(), true, errOnTextClassifier{trigger: "COLDSEG"}, dlp.NewCache(64), true)
+	fwd := anthropic.NewForwarder(up.srv.URL, 5000)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	h := New(det, fwd, nil, log, true, "test", "llama", false, BypassConfig{})
+
+	body := `{"model":"claude","messages":[
+		{"role":"user","content":"earlier COLDSEG context"},
+		{"role":"assistant","content":"ok"},
+		{"role":"user","content":"a safe follow-up question"}
+	]}`
+	rec := do(t, h, "/v1/messages", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if up.calls != 0 {
+		t.Fatalf("history classifier-unavailable MUST fail closed (no egress), got %d calls", up.calls)
+	}
+	got := rec.Body.String()
+	if !strings.Contains(got, "起動") { // distinct "starting up" wording
+		t.Errorf("expected the classifier-warming message, got: %s", got)
+	}
+	if strings.Contains(got, "過去の履歴") {
+		t.Errorf("must not show the misleading 'history has secrets' message: %s", got)
+	}
+}
+
 func TestStreamBlockReturnsSSE(t *testing.T) {
 	up := newMockUpstream()
 	defer up.srv.Close()

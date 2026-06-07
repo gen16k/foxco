@@ -33,11 +33,25 @@ type Segment struct {
 	Role       string // role of the containing message
 }
 
+// Source labels for Result.Source / Evaluation.BlockSource. SourceRule and
+// SourceLFM are genuine content verdicts (the segment really is sensitive).
+// SourceClassifierUnavailable is the transient fail-closed marker used when the
+// classifier could NOT vet the segment at all (sidecar warming / down / timeout):
+// it is the absence of a verdict, not evidence of sensitive content, so callers
+// surface a distinct "classifier warming" message and must never treat it as a
+// real detection (e.g. silently sanitizing history or claiming "history has
+// secrets").
+const (
+	SourceRule                  = "rule"
+	SourceLFM                   = "lfm"
+	SourceClassifierUnavailable = "classifier_unavailable"
+)
+
 // Result is the outcome of classifying a single segment.
 type Result struct {
 	Decision Decision
 	Reason   string // human-readable, safe to surface (never contains the secret)
-	Source   string // "rule", "lfm", or "classifier_unavailable"
+	Source   string // one of the Source* constants above
 	Match    string // offending text: rule => exact match span; lfm => whole segment.
 	// Match IS the sensitive value. It is surfaced only to the opt-in raw-text
 	// store (matched_snippet) for highlighting; it must never enter Reason.

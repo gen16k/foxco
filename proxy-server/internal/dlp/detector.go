@@ -37,7 +37,7 @@ func (d *Detector) Classify(ctx context.Context, seg Segment) Result {
 
 	if d.ruleEnabled && d.rules != nil {
 		if name, span, hit := d.rules.MatchSpan(seg.Text); hit {
-			r := Result{Decision: Block, Reason: "secret detected (" + name + ")", Source: "rule", Match: span}
+			r := Result{Decision: Block, Reason: "secret detected (" + name + ")", Source: SourceRule, Match: span}
 			d.cache.Put(key, r)
 			return r
 		}
@@ -50,12 +50,12 @@ func (d *Detector) Classify(ctx context.Context, seg Segment) Result {
 		}
 		if d.failClosed {
 			// transient: do not cache.
-			return Result{Decision: Block, Reason: "classifier unavailable", Source: "classifier_unavailable"}
+			return Result{Decision: Block, Reason: "classifier unavailable", Source: SourceClassifierUnavailable}
 		}
-		return Result{Decision: Allow, Source: "classifier_unavailable"}
+		return Result{Decision: Allow, Source: SourceClassifierUnavailable}
 	}
 
-	r := Result{Decision: Allow, Source: "lfm"}
+	r := Result{Decision: Allow, Source: SourceLFM}
 	if out.NG {
 		r.Decision = Block
 		r.Reason = out.ShortReason
@@ -97,9 +97,19 @@ func (d *Detector) Evaluate(ctx context.Context, segs []Segment, lastMsgIndex in
 
 	var ng []Segment
 	for _, s := range hist {
-		if r := d.Classify(ctx, s); r.Decision == Block {
-			ng = append(ng, s)
+		r := d.Classify(ctx, s)
+		if r.Decision != Block {
+			continue
 		}
+		// A history unit we could not actually vet (classifier warming / down /
+		// timeout) is a fail-closed condition, NOT evidence of sensitive history.
+		// Surface it as a whole-request classifier-unavailable block so the handler
+		// shows the transient "warming" message — never silently sanitize (drop) an
+		// unvetted unit, and never mislabel it as "history has secrets".
+		if r.Source == SourceClassifierUnavailable {
+			return Evaluation{Block: true, BlockReason: r.Reason, BlockSource: r.Source}
+		}
+		ng = append(ng, s)
 	}
 	return Evaluation{HistoryNG: ng}
 }
