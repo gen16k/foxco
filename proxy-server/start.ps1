@@ -10,17 +10,18 @@
 #
 # DLP model — the akiFQC LFM2 *-Conf-Extract Japanese family (11-category
 # confidential-entity extractor; config profile `jp_confidential_extraction`).
-# These checkpoints ship as safetensors only, so convert once to GGUF and point
-# -Model at the local file. The whole family shares one I/O contract, so changing
-# size is just a different -Model — the config profile never changes:
+# The default 1.2B has an upstream GGUF repo, so -Model is an -hf ref that
+# llama-server auto-downloads on first run. The whole family shares one I/O
+# contract, so changing size is just a different -Model — the config profile
+# never changes:
 #
-#   # one-time per checkpoint: safetensors -> GGUF (see scripts\convert-model-gguf.ps1)
-#   .\scripts\convert-model-gguf.ps1                                   # 1.2B (default)
-#   .\scripts\convert-model-gguf.ps1 -Repo akiFQC/LFM2-350M-Conf-Extract-Japanese   # 350M
+#   .\start.ps1                                                              # 1.2B GGUF via -hf (default)
+#   .\start.ps1 -Model akiFQC/LFM2.5-1.2B-JP-202606-Conf-Extract-GGUF:Q8_0  # higher-fidelity quant
 #
-#   .\start.ps1                                                        # uses the default 1.2B gguf
-#   .\start.ps1 -Model .\models\LFM2-350M-Conf-Extract-Japanese-Q4_K_M.gguf         # swap to 350M
-#   .\start.ps1 -Model akiFQC/<repo>-GGUF:Q4_K_M                       # later: -hf ref once a GGUF repo exists
+# For a checkpoint with no GGUF repo yet (e.g. the 350M), convert it locally once
+# (scripts\convert-model-gguf.ps1) and pass the resulting file:
+#   .\scripts\convert-model-gguf.ps1 -Repo akiFQC/LFM2-350M-Conf-Extract-Japanese
+#   .\start.ps1 -Model .\models\LFM2-350M-Conf-Extract-Japanese-Q4_K_M.gguf
 #
 # GPU acceleration uses the **Vulkan** build of llama.cpp on the integrated
 # Radeon (RDNA 3.5). ROCm does not support AMD iGPUs on Windows, so Vulkan is the
@@ -39,7 +40,7 @@ param(
     [string]$Classifier = "",                  # "" (config default / llama) or "keyword"
     [ValidateSet("vulkan", "cpu")]
     [string]$Backend = "vulkan",               # iGPU (Vulkan) by default; "cpu" to fall back
-    [string]$Model = ".\models\LFM2.5-1.2B-JP-202606-Conf-Extract-Q4_K_M.gguf",  # local .gguf path OR -hf ref
+    [string]$Model = "akiFQC/LFM2.5-1.2B-JP-202606-Conf-Extract-GGUF:Q4_K_M",  # -hf ref (auto-download) OR local .gguf path
     [string]$LlamaServer = "llama-server",     # path to llama-server(.exe); default: on PATH
     [string]$LlamaHost = "127.0.0.1",
     [int]$LlamaPort = 8791,                     # must match inference.endpoint in config

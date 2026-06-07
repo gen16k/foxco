@@ -1,5 +1,33 @@
 # Decision Log
 
+## 既定モデル取得を公式GGUFの -hf 直DLへ切替（ローカル変換はフォールバックに） (20260607 13:20)
+
+### Status
+Accepted
+
+### Context
+
+直前の決定（下記 12:24）ではモデルが safetensors のみだったため `scripts/convert-model-gguf.ps1` で
+ローカル GGUF 変換する運用にしていた。その後、上流に公式 GGUF
+`akiFQC/LFM2.5-1.2B-JP-202606-Conf-Extract-GGUF`（Q4_K_M / Q8_0 / F16 / BF16、単一ファイル、chat
+template は GGUF メタデータ埋め込み）が公開された。
+
+### Decision
+
+- `start.ps1` の既定 `-Model` を `akiFQC/LFM2.5-1.2B-JP-202606-Conf-Extract-GGUF:Q4_K_M`（`-hf` 自動DL）に変更。
+- ローカル変換スクリプトは削除せず、**GGUF 未公開のチェックポイント（例: 350M）向けフォールバック**として存置。
+- 12:24 決定のうち「GGUF はローカル変換運用」を本決定で更新（差し替え1ノブ・抽出契約既定・セキュリティ
+  トレードオフ等は不変）。
+
+### Consequences
+
+- セットアップが簡素化（Python/変換不要、llama.cpp のみで初回 `-hf` DL）。`--jinja` が GGUF 埋め込みの
+  chat template を使用。
+- 実機検証：`-hf` で Q4_K_M を取得し llama-server にロード、日本語サンプルで 11キー抽出JSON→BLOCK/ALLOW を確認。
+
+### Related Records
+- docs/records/20260607/1320-use-upstream-gguf.md
+
 ## 既定DLPモデルを akiFQC Conf-Extract 日本語ファミリへ切替（GGUFローカル変換 + 抽出契約を既定化） (20260607 12:24)
 
 ### Status

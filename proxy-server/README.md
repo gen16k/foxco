@@ -85,26 +85,29 @@ The Vulkan runtime ships with the AMD Adrenalin graphics driver (`vulkan-1.dll`)
 only if it is missing, add it with `winget install KhronosGroup.VulkanRT`. ROCm is
 **not** used — it does not support AMD iGPUs on Windows, so Vulkan is the path.
 
-### DLP model (one-time GGUF conversion)
+### DLP model
 
-The default DLP model is the akiFQC **Conf-Extract** Japanese family. These
-checkpoints ship as safetensors only, so convert one to GGUF once; `start.ps1`
-then loads the local `.gguf`. The whole family shares one I/O contract
-(`jp_confidential_extraction`), so changing model size is just a different
-`-Model` — no code or config-profile change.
+The default DLP model is the akiFQC **Conf-Extract** Japanese family
+(`jp_confidential_extraction` profile). The 1.2B has an upstream GGUF repo, so
+`start.ps1` just `-hf`-downloads it on first run — no setup beyond llama.cpp:
 
 ```powershell
-# 1.2B (default). Produces .\models\LFM2.5-1.2B-JP-202606-Conf-Extract-Q4_K_M.gguf
-.\scripts\convert-model-gguf.ps1
-
-# or the smaller/faster 350M
-.\scripts\convert-model-gguf.ps1 -Repo akiFQC/LFM2-350M-Conf-Extract-Japanese
+.\start.ps1                                                              # 1.2B GGUF (default)
+.\start.ps1 -Model akiFQC/LFM2.5-1.2B-JP-202606-Conf-Extract-GGUF:Q8_0   # higher-fidelity quant
 ```
 
-Needs Python 3, git, and `llama-quantize` (from the winget llama.cpp). See the
-script header for options (`-Quant`, `-OutDir`, `-HfToken`, ...). Once a prebuilt
-`*-GGUF` repo exists upstream you can skip conversion and pass an `-hf` ref:
-`.\start.ps1 -Model akiFQC/<repo>-GGUF:Q4_K_M`.
+The whole family shares one I/O contract, so changing model size is just a
+different `-Model` — no code or config-profile change.
+
+For a checkpoint without a GGUF repo yet (e.g. the 350M), convert it to GGUF
+locally once with `scripts\convert-model-gguf.ps1` (needs Python 3, git, and
+`llama-quantize` from the winget llama.cpp; see the script header for `-Quant` /
+`-OutDir` / ...), then point `-Model` at the file:
+
+```powershell
+.\scripts\convert-model-gguf.ps1 -Repo akiFQC/LFM2-350M-Conf-Extract-Japanese
+.\start.ps1 -Model .\models\LFM2-350M-Conf-Extract-Japanese-Q4_K_M.gguf
+```
 
 ### Launch
 
@@ -112,12 +115,12 @@ script header for options (`-Quant`, `-OutDir`, `-HfToken`, ...). Once a prebuil
 healthy, then starts the proxy.
 
 ```powershell
-# Option A: real LFM on the integrated Radeon iGPU via Vulkan, loading the
-# converted Conf-Extract GGUF from .\models (see "DLP model" above). Default backend.
+# Option A: real LFM on the integrated Radeon iGPU via Vulkan. start.ps1 -hf
+# downloads the Conf-Extract GGUF on first run (see "DLP model" above). Default backend.
 .\start.ps1
 
-# Use a different family member (e.g. the 350M after converting it)
-.\start.ps1 -Model .\models\LFM2-350M-Conf-Extract-Japanese-Q4_K_M.gguf
+# Higher-fidelity quant, or a different family member
+.\start.ps1 -Model akiFQC/LFM2.5-1.2B-JP-202606-Conf-Extract-GGUF:Q8_0
 
 # Same, but keep inference on the CPU (always-works fallback)
 .\start.ps1 -Backend cpu

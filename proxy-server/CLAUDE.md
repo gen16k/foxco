@@ -47,7 +47,7 @@ go test ./...
 .\start.ps1 -Classifier keyword
 
 # Manage the sidecar yourself, then run the proxy only:
-llama-server -hf LiquidAI/LFM2.5-1.2B-Instruct-GGUF:Q4_K_M --host 127.0.0.1 --port 8791 --jinja -ngl 99
+llama-server -hf akiFQC/LFM2.5-1.2B-JP-202606-Conf-Extract-GGUF:Q4_K_M --host 127.0.0.1 --port 8791 --jinja -ngl 99
 .\start.ps1 -NoSidecar
 
 # Point Claude Code at the proxy (note: no /v1 suffix):
