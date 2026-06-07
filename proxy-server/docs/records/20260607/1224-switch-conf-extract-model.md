@@ -1,4 +1,4 @@
-# 既定DLPモデルを akiFQC Conf-Extract 日本語ファミリへ切替 (20260607 12:24) #pending
+# 既定DLPモデルを akiFQC Conf-Extract 日本語ファミリへ切替 (20260607 12:24) #bc0e514
 
 ## Motivation
 
