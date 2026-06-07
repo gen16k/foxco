@@ -42,7 +42,7 @@ param(
     [string]$Classifier = "",                  # "" (config default / llama) or "keyword"
     [ValidateSet("vulkan", "cpu")]
     [string]$Backend = "vulkan",               # iGPU (Vulkan) by default; "cpu" to fall back
-    [string]$Model = "LiquidAI/LFM2.5-1.2B-Instruct-GGUF:Q4_K_M",  # -hf ref or local .gguf path
+    [string]$Model = "akiFQC/LFM2.5-1.2B-JP-202606-Conf-Extract-GGUF:Q4_K_M",  # -hf ref (auto-download) or local .gguf path
     [string]$LlamaServer = "llama-server",     # path to llama-server(.exe); default: on PATH
     [string]$LlamaHost = "127.0.0.1",
     [int]$LlamaPort = 8791,                     # must match inference.endpoint in config

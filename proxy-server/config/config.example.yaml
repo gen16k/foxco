@@ -90,22 +90,26 @@ inference:
   # to "keyword" to run without a model (dev/CI/demo fallback).
   type: "llama_cpp_http"
   endpoint: "http://127.0.0.1:8791"
-  model: "LFM2.5-1.2B"
+  # Label only (audit/request body). The sidecar serves whatever GGUF start.ps1
+  # loaded (-Model); keep this in sync with the loaded checkpoint.
+  model: "LFM2.5-1.2B-JP-202606-Conf-Extract"
   warmup_on_start: true
   health_timeout_ms: 500
-  # LFM I/O contract (prompt + schema + output parsing). Swap this when a
-  # fine-tuned model expects a different format. Built-ins:
-  #   reason_decision (default) — {"reason","decision":ALLOW|BLOCK} classifier.
-  #   ng_boolean                — {"ng","short_reason"} boolean classifier.
-  #   jp_confidential_extraction — for a model fine-tuned on
-  #     akiFQC/japanese-confidential-information-extraction-sft: an 11-category
-  #     Japanese entity-EXTRACTION model (plain-text input, JSON entity-list
-  #     output); any non-empty category => BLOCK. Requires that fine-tuned
-  #     checkpoint loaded in the sidecar — set `model` to it before selecting.
+  # LFM I/O contract (prompt + schema + output parsing). Must match the loaded
+  # checkpoint's training format. Built-ins:
+  #   jp_confidential_extraction (default) — for the akiFQC LFM2 *-Conf-Extract
+  #     Japanese family (default checkpoint akiFQC/LFM2.5-1.2B-JP-202606-Conf-Extract,
+  #     start.ps1 -hf-downloads its GGUF): an 11-category entity-EXTRACTION model
+  #     (plain-text input, JSON entity-list output); any non-empty category => BLOCK.
+  #     The whole family shares this contract, so swapping size only changes
+  #     start.ps1 -Model (and this `model` label) — not the profile.
+  #   reason_decision — {"reason","decision":ALLOW|BLOCK} generic classifier.
+  #   ng_boolean      — {"ng","short_reason"} boolean classifier.
   # Register more in internal/inference/profile.go.
-  profile: "reason_decision"
-  # Optional: override just the profile's system prompt from a file (handy while
-  # iterating on a fine-tuned model without rebuilding).
+  profile: "jp_confidential_extraction"
+  # Optional: override just the profile's system prompt from a file. Use this to
+  # pin the deployed checkpoint's EXACT training prompt if it drifts from the
+  # built-in (small models are sensitive to punctuation/newlines).
   # system_prompt_file: "C:\\path\\to\\system_prompt.txt"
 
 cache:

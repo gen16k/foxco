@@ -178,10 +178,10 @@ func Default() Config {
 		Inference: Inference{
 			Type:            "llama_cpp_http",
 			Endpoint:        "http://127.0.0.1:8791",
-			Model:           "LFM2.5-1.2B",
+			Model:           "LFM2.5-1.2B-JP-202606-Conf-Extract",
 			WarmupOnStart:   true,
 			HealthTimeoutMS: 500,
-			Profile:         "reason_decision",
+			Profile:         "jp_confidential_extraction",
 		},
 		Cache: Cache{Enabled: true, MaxEntries: 4096, PersistSQLite: false},
 		Storage: Storage{

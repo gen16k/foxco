@@ -1,5 +1,28 @@
 # Decision Log
 
+## 既定DLPモデルを akiFQC Conf-Extract 日本語ファミリ(公式GGUF)へ切替 (20260607 13:20)
+
+### Status
+Accepted
+
+### Decision
+
+既定を抽出契約 `jp_confidential_extraction`(11カテゴリ抽出→非空でBLOCK、理由/監査はカテゴリ名のみ)に変更。
+既定モデルは公式 GGUF を `-hf` 直DL（`start.ps1 -Model akiFQC/LFM2.5-1.2B-JP-202606-Conf-Extract-GGUF:Q4_K_M`）。
+同系統のサイズ差し替えは `-Model` の1ノブのみ（プロファイル不変）。GGUF 未公開系統（例: 350M）向けに
+`scripts/convert-model-gguf.ps1`（safetensors→GGUF ローカル変換）をフォールバックとして追加。
+
+### Consequences
+
+- `jp_confidential_extraction` は学習分布一致のため `<<<DATA>>>` ラッパを外す（注入耐性低下。最悪でも抽出漏れ
+  =FN で、`rule_guardrail`+fail-closed が後段で担保）。11カテゴリ外/英語前提の秘密は rule guardrail 依存のため
+  `dlp.rule_guardrail.enabled: true` 維持が前提。実学習プロンプトが非公開のため必要に応じ `system_prompt_file` で固定。
+- 実機検証: 公式GGUFを `-hf` でDL/ロードし、機密JP→BLOCK・良性→ALLOW を確認。
+
+### Related Records
+- docs/records/20260607/1224-switch-conf-extract-model.md
+- docs/records/20260607/1320-use-upstream-gguf.md
+
 ## サービス一元ライフサイクル: サイドカー/UI はユーザセッションタスク経由 (20260607 12:10)
 
 ### Status
