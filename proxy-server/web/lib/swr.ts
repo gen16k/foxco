@@ -97,6 +97,22 @@ export function useRecentBlocks(limit = 20) {
   );
 }
 
+// useRecentEvents polls the newest events of ALL decisions on a fixed 3s cadence,
+// independent of the dashboard time range / manual refresh interval. The Network
+// Flow tab diffs successive pages (seen-set) to spawn one packet per new event —
+// green for anything that reached upstream, red for a BLOCK. No from/to is sent,
+// so the BFF returns the latest page (and, in mock mode, the rolling live block).
+export function useRecentEvents(limit = 30) {
+  return useSWR<EventPage>(
+    ["recent-events", limit],
+    async () => {
+      const qs = new URLSearchParams({ limit: String(limit) });
+      return jsonFetcher(`/api/admin/events?${qs.toString()}`) as Promise<EventPage>;
+    },
+    { refreshInterval: 3000, keepPreviousData: true, revalidateOnFocus: true, dedupingInterval: 1500 },
+  );
+}
+
 export function useMeta() {
   return useSWR<Meta>("meta", async () => jsonFetcher("/api/admin/meta") as Promise<Meta>, {
     refreshInterval: 15000,

@@ -21,6 +21,7 @@ proxy-server/docs/lfm2.5-classification-test.txt
 # Admin UI (Next.js) build / deps / local env
 proxy-server/web/node_modules/
 proxy-server/web/.next/
+proxy-server/web/.next-mock/
 proxy-server/web/out/
 proxy-server/web/.env.local
 proxy-server/web/next-env.d.ts
