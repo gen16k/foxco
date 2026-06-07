@@ -420,7 +420,7 @@ func buildProxy(t *testing.T, classifier dlp.Classifier, upstreamBase, model, ba
 	fwd := anthropic.NewForwarder(upstreamBase, 60000)
 	rec := &captureRecorder{}
 
-	h := proxy.New(det, fwd, rec, logger, true /*failClosed*/, model, backend)
+	h := proxy.New(det, fwd, rec, logger, true /*failClosed*/, model, backend, false /*storeRaw*/, proxy.BypassConfig{})
 	mux := http.NewServeMux()
 	h.Register(mux)
 	return mux, rec, logBuf

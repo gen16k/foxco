@@ -634,6 +634,36 @@ data: {"type":"message_stop"}
 - DLP識別マーカーを含む
 ```
 
+### 9.5 明示的ユーザーバイパス（誤検知回避） — as-built (§1.1)
+
+> 追加（§1.1）: 明らかな誤検知に対し、ユーザーが**最新 user ターンのユーザー入力
+> テキスト**に**バイパスマーカー**（既定 `#dlp-allow`、`dlp.bypass.marker` で変更可、
+> `dlp.bypass.enabled=false` で無効化）を含めると、**そのライブターンのみ** DLP
+> ブロックを通過させる。設計判断は docs/decisions.md「明示的ユーザーバイパスマーカー」。
+
+仕様（不変条件との関係を明記）:
+
+```text
+- スコープ: フルバイパス。当該ライブターンは LFM/キーワード分類器だけでなく
+           確定ルールガードレール(§7)もスキップする（ユーザーの明示的同意）。
+- 履歴: 不変。過去ターンでブロック済みの機密は従来どおりサニタイズしてから転送。
+- 検出: Goの決定的部分文字列一致（LFMではない）。string content と type:"text"
+        ブロックのみを対象とし、tool_result/ファイル内容は対象外。これにより
+        「検査対象は不活性データ」不変条件を維持する。
+- ストリップ: 転送前にマーカーを除去（Claudeに渡さない）。除去で空になる場合は
+              空content回避のため当該メッセージはそのまま転送。
+- 監査: decision = BYPASS（§15.2）、details.reason = "user_bypass_marker"、
+        upstream_called = true。管理UIは BYPASS を ALLOW/BLOCK と区別表示する。
+- チャネル: /v1/messages と /v1/messages/count_tokens の双方に適用。
+- 位置づけ: advisory。env を外す/プロキシ停止で誰でも回避できる脅威モデル下で、
+            回避を「監査可能・範囲限定」にするための手段。§10 の削除済み HMAC
+            marker（署名付き）とは別物の非署名 UX 目印。
+```
+
+実装: `internal/proxy/bypass.go`（検出・ストリップ）、`internal/proxy/handler.go`
+（`bypassForward`/`recordBypass`）、`internal/dlp/detector.go`（`EvaluateHistoryOnly`）、
+`internal/config/config.go`（`dlp.bypass`）、admin UI（`DecisionBadge`/`EventFilters`）。
+
 ## 10. DLP識別マーカー仕様
 
 > 改訂（§1.1）: **HMAC署名・Block Registry照合・session_id復元は全廃**。Proxyはステートレスに毎リクエストの全セグメントを評価し、`fingerprint→decision` キャッシュで各セグメント生涯1回の推論に抑える。マーカーは**非署名の自己認識センチネル** `<!-- LOCAL_DLP_NOTE -->` のみとし、「ブロック通知の assistant メッセージを、対応する user turn と一緒にペア除去する」ためのUX目印として残す（§10.2-10.6 の署名・検証仕様は不使用）。
@@ -969,7 +999,8 @@ GET /admin/api/model/status
 
 ```text
 - 検知時刻
-- decision
+- decision           # ALLOW | BLOCK | BYPASS（§9.5）| PASSTHROUGH。管理画面は
+                     #   BYPASS を ALLOW/BLOCK と区別した状態として表示する
 - category
 - severity
 - action
@@ -981,6 +1012,11 @@ GET /admin/api/model/status
 - upstream_called
 - message_fingerprint
 ```
+
+> 改訂（§1.1）: `decision` に明示的ユーザーバイパス由来の **`BYPASS`** を追加（§9.5）。
+> as-built の audit `Decision` は `ALLOW`/`BLOCK`/`BYPASS`/`PASSTHROUGH`。admin UI の
+> `DecisionBadge` は BYPASS を専用色（amber）で、`EventFilters` は decision フィルタの
+> 選択肢として表示する。
 
 ### 15.3 表示しない情報
 

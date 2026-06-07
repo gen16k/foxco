@@ -25,7 +25,7 @@ type AuditEvent struct {
 	EventID        string
 	CreatedAt      string
 	EventType      string // "request"
-	Decision       string // "ALLOW" | "BLOCK"
+	Decision       string // "ALLOW" | "BLOCK" | "BYPASS" | "PASSTHROUGH"
 	LatencyMS      int64
 	ModelName      string
 	Backend        string

@@ -156,7 +156,12 @@ func buildApp(cfg config.Config, classifierOverride string, log *slog.Logger) (*
 		}
 	}
 
-	h := proxy.New(detector, forwarder, audit, log, cfg.DLP.FailClosed, cfg.Inference.Model, backend, cfg.Storage.StoreRawText)
+	bypass := proxy.BypassConfig{Enabled: cfg.DLP.Bypass.Enabled, Marker: cfg.DLP.Bypass.Marker}
+	if bypass.Enabled {
+		log.Warn("DLP bypass marker enabled; a request whose latest user turn contains the marker is forwarded without blocking (audited as BYPASS)",
+			"marker", bypass.Marker)
+	}
+	h := proxy.New(detector, forwarder, audit, log, cfg.DLP.FailClosed, cfg.Inference.Model, backend, cfg.Storage.StoreRawText, bypass)
 	mux := http.NewServeMux()
 	h.Register(mux)
 

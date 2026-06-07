@@ -103,3 +103,21 @@ func (d *Detector) Evaluate(ctx context.Context, segs []Segment, lastMsgIndex in
 	}
 	return Evaluation{HistoryNG: ng}
 }
+
+// EvaluateHistoryOnly classifies only the history segments (those not belonging
+// to the last message) and returns the sensitive ones to sanitize. The live
+// turn is deliberately not classified: it is used by the explicit user-bypass
+// path, where the latest turn is forwarded without blocking but previously
+// sensitive history is still removed.
+func (d *Detector) EvaluateHistoryOnly(ctx context.Context, segs []Segment, lastMsgIndex int) []Segment {
+	var ng []Segment
+	for _, s := range segs {
+		if s.MsgIndex == lastMsgIndex {
+			continue
+		}
+		if r := d.Classify(ctx, s); r.Decision == Block {
+			ng = append(ng, s)
+		}
+	}
+	return ng
+}

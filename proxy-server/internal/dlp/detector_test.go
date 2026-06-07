@@ -120,3 +120,22 @@ func TestEvaluateHistoryNG(t *testing.T) {
 		t.Fatalf("expected 1 history NG (tu_1), got %+v", ev.HistoryNG)
 	}
 }
+
+func TestEvaluateHistoryOnlySkipsLiveTurn(t *testing.T) {
+	// The live turn carries a "secret" the classifier would flag, but
+	// EvaluateHistoryOnly must not classify it (the bypass path forwards it).
+	// A sensitive history segment must still be reported for sanitization.
+	stub := &stubClassifier{flag: "secretz"}
+	d := newDet(stub, true)
+	segs := []Segment{
+		{Type: SegToolResult, Text: "earlier secretz leak", MsgIndex: 0, ToolUseID: "tu_1"},
+		{Type: SegUserText, Text: "live secretz the user chose to send", MsgIndex: 4},
+	}
+	ng := d.EvaluateHistoryOnly(context.Background(), segs, 4)
+	if len(ng) != 1 || ng[0].ToolUseID != "tu_1" {
+		t.Fatalf("expected 1 history NG (tu_1), got %+v", ng)
+	}
+	if stub.calls != 1 {
+		t.Fatalf("only the history segment should be classified, got %d calls", stub.calls)
+	}
+}
