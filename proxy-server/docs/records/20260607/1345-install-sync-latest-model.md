@@ -1,4 +1,4 @@
-# install.ps1 を再実行で最新モデルへ同期（既定モデル更新 + config同期） (20260607 13:45) #pending
+# install.ps1 を再実行で最新モデルへ同期（既定モデル更新 + config同期） (20260607 13:45) #aff27fd
 
 ## Motivation
 
