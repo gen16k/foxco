@@ -8,6 +8,12 @@
 #      the service's supervisor starts them on service start and stops them on stop
 #   5. migrates a prior "LocalLfmDlpProxy" install (keeps its CA + audit DB)
 #
+# Re-running is idempotent and brings an existing install up to date: it rebuilds +
+# recopies the binary/start.ps1/web, and syncs the deployed config's
+# inference.model + inference.profile to the installed -ModelLabel / -Profile
+# (defaults: the akiFQC Conf-Extract JP GGUF + jp_confidential_extraction). The
+# sidecar task is re-registered to load -Model. All other config settings are kept.
+#
 # The service is MANUAL start and is NOT started by this installer: starting it
 # redirects api.anthropic.com -> 127.0.0.1, which would disrupt any Claude session
 # running right now. Start it deliberately (while logged in) with:
@@ -20,7 +26,9 @@ param(
     [string]$InstallRoot = (Join-Path $env:ProgramData "PromptGate"),
     [ValidateSet("vulkan", "cpu")]
     [string]$Backend = "vulkan",
-    [string]$Model = "LiquidAI/LFM2.5-1.2B-Instruct-GGUF:Q4_K_M",
+    [string]$Model = "akiFQC/LFM2.5-1.2B-JP-202606-Conf-Extract-GGUF:Q4_K_M",  # GGUF the sidecar loads (-hf ref or local .gguf path)
+    [string]$ModelLabel = "LFM2.5-1.2B-JP-202606-Conf-Extract",                # inference.model label written into config (audit/UI only)
+    [string]$Profile = "jp_confidential_extraction",                          # inference.profile (LFM I/O contract) written into config
     [int]$LlamaPort = 8791,
     [switch]$StartNow,   # opt-in: start the service immediately (will redirect api.anthropic.com now)
     [switch]$SkipBuild   # reuse an existing proxy.exe instead of building (CI / sandbox tests)
@@ -132,6 +140,24 @@ if (Test-Path $cfgDst) {
         Set-Content -Path $cfgDst -Value $c2 -NoNewline
         Write-Host "Migrated config paths LocalLfmDlpProxy -> PromptGate."
     }
+}
+
+# Sync the deployed config's inference model label + I/O contract to what this
+# install delivers, so re-running install.ps1 brings an existing config up to date
+# (e.g. after the default model changes). Only these two single-line keys are
+# rewritten; every other setting is preserved. inference.model / inference.profile
+# are the only top-level-quoted `model:` / `profile:` keys in the config, and
+# commented lines (leading '#') never match. (Neither label nor profile contains a
+# '$', so the .NET replacement strings are literal.)
+$cfgNow = Get-Content -Raw $cfgDst
+$cfgSync = [regex]::Replace($cfgNow, '(?m)^(?<i>[ \t]*)model:[ \t]*".*"[ \t]*$', ('${i}model: "' + $ModelLabel + '"'))
+$cfgSync = [regex]::Replace($cfgSync, '(?m)^(?<i>[ \t]*)profile:[ \t]*".*"[ \t]*$', ('${i}profile: "' + $Profile + '"'))
+if ($cfgSync -ne $cfgNow) {
+    Set-Content -Path $cfgDst -Value $cfgSync -NoNewline
+    Write-Host "Synced config: inference.model='$ModelLabel', inference.profile='$Profile'."
+}
+else {
+    Write-Host "Config inference.model/profile already current ($ModelLabel / $Profile)."
 }
 
 # Enable supervise (service owns the user-session sidecar + admin UI). Append an
