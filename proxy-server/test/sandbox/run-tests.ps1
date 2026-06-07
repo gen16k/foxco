@@ -16,8 +16,8 @@ $share      = "C:\share"
 $transcript = Join-Path $share "transcript.txt"
 $resultsPath= Join-Path $share "results.json"
 $donePath   = Join-Path $share "DONE"
-$logFile    = Join-Path $env:ProgramData "LocalLfmDlpProxy\logs\proxy.log"
-$cfgFile    = Join-Path $env:ProgramData "LocalLfmDlpProxy\config.yaml"
+$logFile    = Join-Path $env:ProgramData "PromptGate\logs\proxy.log"
+$cfgFile    = Join-Path $env:ProgramData "PromptGate\config.yaml"
 $repoSrc    = "C:\repo"
 $work       = "C:\work\proxy-server"
 $apiBase    = "https://api.anthropic.com"
@@ -133,12 +133,14 @@ try {
     try { & "$work\install.ps1" -SkipBuild *>&1 | ForEach-Object { Write-Host "  $_" } }
     catch { Write-Host "install.ps1 raised: $($_.Exception.Message)" }
 
-    $svc = Get-Service -Name LocalLfmDlpProxy -ErrorAction SilentlyContinue
-    Add-Result "install.service_registered" "service exists + StartType Automatic" ("{0}/{1}" -f $svc.Status, $svc.StartType) ($svc -and "$($svc.StartType)" -eq "Automatic")
-    $ca = Get-ChildItem Cert:\LocalMachine\Root -ErrorAction SilentlyContinue | Where-Object { $_.Subject -like "*Local LFM DLP Proxy CA*" }
+    $svc = Get-Service -Name PromptGate -ErrorAction SilentlyContinue
+    Add-Result "install.service_registered" "service exists + StartType Manual" ("{0}/{1}" -f $svc.Status, $svc.StartType) ($svc -and "$($svc.StartType)" -eq "Manual")
+    $ca = Get-ChildItem Cert:\LocalMachine\Root -ErrorAction SilentlyContinue | Where-Object { $_.Subject -like "*PromptGate CA*" }
     Add-Result "install.ca_trusted" "CA in LocalMachine\Root" ($ca.Subject -join ";") ([bool]$ca)
-    $task = Get-ScheduledTask -TaskName "LocalLfmDlpProxy-Sidecar" -ErrorAction SilentlyContinue
-    Add-Result "install.sidecar_task" "logon task registered" ($task.State) ([bool]$task)
+    $task = Get-ScheduledTask -TaskName "PromptGate-Sidecar" -ErrorAction SilentlyContinue
+    Add-Result "install.sidecar_task" "RunOnDemand sidecar task registered" ($task.State) ([bool]$task)
+    $webTaskReg = Get-ScheduledTask -TaskName "PromptGate-WebUI" -ErrorAction SilentlyContinue
+    Add-Result "install.web_task" "RunOnDemand web UI task registered" ($webTaskReg.State) ([bool]$webTaskReg)
     Save-Results
 
     # ===== 2. START (default config = llama, warmup on, NO sidecar) =====
@@ -147,15 +149,15 @@ try {
     catch { Write-Host "proxyctl start raised: $($_.Exception.Message)" }
     $port443 = Wait-Port 443 30
     ipconfig /flushdns | Out-Null
-    $svc = Get-Service -Name LocalLfmDlpProxy -ErrorAction SilentlyContinue
+    $svc = Get-Service -Name PromptGate -ErrorAction SilentlyContinue
     $hostsTxt = Get-Content -Raw (Join-Path $env:SystemRoot "System32\drivers\etc\hosts") -ErrorAction SilentlyContinue
-    $hostsBlock = [bool]($hostsTxt -match "LocalLfmDlpProxy")
+    $hostsBlock = [bool]($hostsTxt -match "PromptGate")
     $addrs = @()
     try { $addrs = [System.Net.Dns]::GetHostAddresses("api.anthropic.com") | ForEach-Object { $_.IPAddressToString } } catch {}
     $redirected = $addrs -contains "127.0.0.1"
     Add-Result "start.service_running" "Running" $svc.Status ("$($svc.Status)" -eq "Running")
     Add-Result "start.port443_listening" "127.0.0.1:443 accepts" $port443 $port443
-    Add-Result "start.hosts_block_present" "hosts has LocalLfmDlpProxy block" $hostsBlock $hostsBlock
+    Add-Result "start.hosts_block_present" "hosts has PromptGate block" $hostsBlock $hostsBlock
     Add-Result "start.redirect_resolves" "api.anthropic.com -> 127.0.0.1" ($addrs -join ",") $redirected
     Copy-Log; Save-Results
 
@@ -182,7 +184,7 @@ try {
     [System.IO.File]::WriteAllText($cfgFile, $c, (New-Object System.Text.UTF8Encoding($false)))
     $kw = [bool]((Get-Content -Raw $cfgFile) -match '(?m)^\s*type:\s*"keyword"')
     Add-Result "reconfig.keyword_set" "inference.type = keyword" $kw $kw
-    try { Restart-Service -Name LocalLfmDlpProxy -Force -ErrorAction Stop } catch { Write-Host "restart raised: $($_.Exception.Message)" }
+    try { Restart-Service -Name PromptGate -Force -ErrorAction Stop } catch { Write-Host "restart raised: $($_.Exception.Message)" }
     $port443b = Wait-Port 443 30
     ipconfig /flushdns | Out-Null
     Add-Result "reconfig.restarted_listening" "127.0.0.1:443 accepts after restart" $port443b $port443b
@@ -231,16 +233,16 @@ try {
     catch { Write-Host "uninstall.ps1 raised: $($_.Exception.Message)" }
     ipconfig /flushdns | Out-Null
     Start-Sleep -Milliseconds 500
-    $svcGone = -not (Get-Service -Name LocalLfmDlpProxy -ErrorAction SilentlyContinue)
-    $taskGone = -not (Get-ScheduledTask -TaskName "LocalLfmDlpProxy-Sidecar" -ErrorAction SilentlyContinue)
-    $caGone = -not (Get-ChildItem Cert:\LocalMachine\Root -ErrorAction SilentlyContinue | Where-Object { $_.Subject -like "*Local LFM DLP Proxy CA*" })
+    $svcGone = -not (Get-Service -Name PromptGate -ErrorAction SilentlyContinue)
+    $taskGone = -not (Get-ScheduledTask -TaskName "PromptGate-Sidecar" -ErrorAction SilentlyContinue)
+    $caGone = -not (Get-ChildItem Cert:\LocalMachine\Root -ErrorAction SilentlyContinue | Where-Object { $_.Subject -like "*PromptGate CA*" })
     $hostsTxt2 = Get-Content -Raw (Join-Path $env:SystemRoot "System32\drivers\etc\hosts") -ErrorAction SilentlyContinue
-    $hostsClean = -not ($hostsTxt2 -match "LocalLfmDlpProxy")
+    $hostsClean = -not ($hostsTxt2 -match "PromptGate")
     $addrs2 = @()
     try { $addrs2 = [System.Net.Dns]::GetHostAddresses("api.anthropic.com") | ForEach-Object { $_.IPAddressToString } } catch {}
     $notRedirected = -not ($addrs2 -contains "127.0.0.1")
     Add-Result "uninstall.service_removed" "service gone" $svcGone $svcGone
-    Add-Result "uninstall.task_removed" "logon task gone" $taskGone $taskGone
+    Add-Result "uninstall.task_removed" "sidecar task gone" $taskGone $taskGone
     Add-Result "uninstall.ca_removed" "CA removed from store" $caGone $caGone
     Add-Result "uninstall.hosts_clean" "hosts block stripped" $hostsClean $hostsClean
     Add-Result "uninstall.resolves_normally" "api.anthropic.com no longer 127.0.0.1" ($addrs2 -join ",") $notRedirected

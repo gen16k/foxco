@@ -1,6 +1,6 @@
-# FoxCo Admin UI
+# PromptGate Admin UI
 
-A Grafana-style, read-only admin dashboard for the Local LFM DLP Proxy. It shows
+A Grafana-style, read-only admin dashboard for PromptGate. It shows
 detection (BLOCK) counts and contents plus **all prompt history**, served from the
 proxy's local SQLite audit log.
 

@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"local-lfm-dlp-proxy/internal/anthropic"
-	"local-lfm-dlp-proxy/internal/dlp"
+	"promptgate/internal/anthropic"
+	"promptgate/internal/dlp"
 )
 
 func parse(t *testing.T, body string) []anthropic.Message {

@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"local-lfm-dlp-proxy/internal/storage"
+	"promptgate/internal/storage"
 )
 
 func seededStore(t *testing.T) *storage.Store {

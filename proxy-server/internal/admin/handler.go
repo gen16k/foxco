@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"local-lfm-dlp-proxy/internal/storage"
+	"promptgate/internal/storage"
 )
 
 // Reader is the read-only view of the audit store the admin API depends on.

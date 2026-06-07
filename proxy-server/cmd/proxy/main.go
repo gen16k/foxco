@@ -1,4 +1,4 @@
-// Command proxy is the Local LFM DLP Proxy. It inspects outbound Claude Code
+// Command proxy is PromptGate. It inspects outbound Claude Code
 // requests with the LFM classifier (plus a deterministic secret guardrail),
 // blocks sensitive egress, sanitizes re-sent history, and forwards approved
 // traffic to the Anthropic API.
@@ -29,16 +29,16 @@ import (
 	"syscall"
 	"time"
 
-	"local-lfm-dlp-proxy/internal/admin"
-	"local-lfm-dlp-proxy/internal/anthropic"
-	"local-lfm-dlp-proxy/internal/config"
-	"local-lfm-dlp-proxy/internal/dlp"
-	"local-lfm-dlp-proxy/internal/hostsfile"
-	"local-lfm-dlp-proxy/internal/inference"
-	"local-lfm-dlp-proxy/internal/mitm"
-	"local-lfm-dlp-proxy/internal/proxy"
-	"local-lfm-dlp-proxy/internal/storage"
-	"local-lfm-dlp-proxy/internal/upstreamdial"
+	"promptgate/internal/admin"
+	"promptgate/internal/anthropic"
+	"promptgate/internal/config"
+	"promptgate/internal/dlp"
+	"promptgate/internal/hostsfile"
+	"promptgate/internal/inference"
+	"promptgate/internal/mitm"
+	"promptgate/internal/proxy"
+	"promptgate/internal/storage"
+	"promptgate/internal/upstreamdial"
 )
 
 const (
@@ -111,6 +111,7 @@ type application struct {
 	log      *slog.Logger
 	servers  []*http.Server
 	hostsMgr *hostsfile.Manager
+	super    *supervisor // nil unless cfg.Supervise.Enabled (Windows service owns sidecar + web UI)
 }
 
 // buildApp wires the DLP pipeline, forwarder, listeners, and hosts manager for
@@ -167,6 +168,9 @@ func buildApp(cfg config.Config, classifierOverride string, log *slog.Logger) (*
 
 	startedAt := time.Now().UTC().Format(time.RFC3339)
 	app := &application{cfg: cfg, log: log}
+	if cfg.Supervise.Enabled {
+		app.super = newSupervisor(cfg, log)
+	}
 
 	// Read-only observability API for the local admin UI (localhost-only). Registered
 	// on the shared mux, so it is served on every configured listener (app.servers).
@@ -258,6 +262,13 @@ func (a *application) start() error {
 			}
 		}()
 	}
+
+	// Listeners are live; bring up the user-session dependents (sidecar + web UI).
+	// Best-effort: a failure here is logged, not returned, so the proxy still runs
+	// (and fail-closes) even if no interactive user is logged in.
+	if a.super != nil {
+		a.super.Start()
+	}
 	return nil
 }
 
@@ -270,6 +281,11 @@ func (a *application) stop() {
 		} else {
 			a.log.Info("hosts redirect removed")
 		}
+	}
+	// Tear down the user-session dependents (web UI then sidecar) before closing
+	// our own listeners, with a port-scoped force-kill so nothing is orphaned.
+	if a.super != nil {
+		a.super.Stop()
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
@@ -371,5 +387,5 @@ func defaultServiceLog() string {
 	if pd == "" {
 		return ""
 	}
-	return filepath.Join(pd, "LocalLfmDlpProxy", "logs", "proxy.log")
+	return filepath.Join(pd, "PromptGate", "logs", "proxy.log")
 }

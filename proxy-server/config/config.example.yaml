@@ -1,5 +1,5 @@
-# Local LFM DLP Proxy — example configuration.
-# Copy to %ProgramData%\LocalLfmDlpProxy\config.yaml and edit as needed.
+# PromptGate — example configuration.
+# Copy to %ProgramData%\PromptGate\config.yaml and edit as needed.
 # (The Windows service runs as LocalSystem, so machine-wide %ProgramData% is used
 #  rather than the per-user %LOCALAPPDATA%.)
 
@@ -31,8 +31,8 @@ tls:
   # Proxy-issued root CA (generated on first run, installed into the Windows
   # trust store by install.ps1). Leaf certs for intercept.hosts are minted on
   # the fly and signed by this CA.
-  ca_cert_path: "%ProgramData%\\LocalLfmDlpProxy\\ca\\ca.crt"
-  ca_key_path: "%ProgramData%\\LocalLfmDlpProxy\\ca\\ca.key"
+  ca_cert_path: "%ProgramData%\\PromptGate\\ca\\ca.crt"
+  ca_key_path: "%ProgramData%\\PromptGate\\ca\\ca.key"
   # X.509 Name Constraints: the CA is only valid for these DNS domains, so a
   # leaked CA key cannot impersonate unrelated sites. Adding a non-anthropic
   # intercept host means reissuing + reinstalling the CA with it listed here.
@@ -116,7 +116,7 @@ cache:
 
 storage:
   type: "sqlite"
-  path: "%ProgramData%\\LocalLfmDlpProxy\\state\\dlp.db"
+  path: "%ProgramData%\\PromptGate\\state\\dlp.db"
   # store_raw_text: default false = metadata only (no raw content / secrets).
   # When true, the audit DB ALSO persists the live user turn (the new prompt) for
   # every request so the admin UI can show prompt history + detection contents.
@@ -131,11 +131,11 @@ logging:
   redact_sensitive_values: true
   # When running as a Windows service there is no console; direct logs to a file.
   # Leave empty to log to stdout (console / dev mode).
-  file: "%ProgramData%\\LocalLfmDlpProxy\\logs\\proxy.log"
+  file: "%ProgramData%\\PromptGate\\logs\\proxy.log"
 
 service:
   # Windows service name (used by install.ps1 / uninstall.ps1 / proxyctl.ps1).
-  name: "LocalLfmDlpProxy"
+  name: "PromptGate"
 
 admin:
   # Read-only observability API (/admin/stats, /admin/events, /admin/meta) for the
@@ -144,3 +144,19 @@ admin:
   # When set, every /admin/* request must send `Authorization: Bearer <token>`.
   # Strongly recommended whenever store_raw_text is true. Empty = no token.
   auth_token: ""
+
+# supervise: only the installed Windows service uses this — install.ps1 appends an
+# active block (enabled: true) to the deployed config. Leave it commented here so
+# console/dev runs (this example) keep it disabled: start.ps1 launches the sidecar
+# and admin UI inline, and a second trigger would contend for the ports.
+#
+# When enabled, the service starts the named user-session RunOnDemand tasks on
+# service start (the sidecar needs the interactive session for the iGPU) and stops
+# them on service stop, force-killing a lingering child by port.
+#
+# supervise:
+#   enabled: true
+#   sidecar_task: "PromptGate-Sidecar"
+#   web_task: "PromptGate-WebUI"
+#   web_port: 3939
+#   stop_timeout_ms: 8000

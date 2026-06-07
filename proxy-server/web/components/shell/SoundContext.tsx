@@ -14,7 +14,7 @@ export function useSound() {
   return useContext(SoundContext);
 }
 
-const KEY = "foxco.sound";
+const KEY = "promptgate.sound";
 
 // SoundProvider holds the opt-in alert-sound preference (default off), persisted
 // to localStorage. It hydrates after mount to avoid an SSR mismatch, and resumes

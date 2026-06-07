@@ -27,8 +27,8 @@ import (
 )
 
 const (
-	caCommonName    = "Local LFM DLP Proxy CA"
-	caOrg           = "LocalLfmDlpProxy"
+	caCommonName    = "PromptGate CA"
+	caOrg           = "PromptGate"
 	caValidity      = 10 * 365 * 24 * time.Hour
 	leafValidity    = 90 * 24 * time.Hour
 	leafRenewBefore = 24 * time.Hour

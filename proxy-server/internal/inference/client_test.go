@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"local-lfm-dlp-proxy/internal/dlp"
+	"promptgate/internal/dlp"
 )
 
 func TestLlamaClientClassify(t *testing.T) {

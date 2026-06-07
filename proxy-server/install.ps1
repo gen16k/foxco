@@ -1,21 +1,23 @@
-# Local LFM DLP Proxy — one-time installer (run elevated, from this directory).
+# PromptGate — one-time installer (run elevated, from this directory).
 #
-# Sets up transparent HTTPS interception:
-#   1. builds proxy.exe and copies it + config + start.ps1 to %ProgramData%\LocalLfmDlpProxy
+# Sets up transparent HTTPS interception with a single service-owned lifecycle:
+#   1. builds proxy.exe and copies it + config + start.ps1 + web/ to %ProgramData%\PromptGate
 #   2. generates a Name-Constrained root CA and installs it into LocalMachine\Root
-#   3. registers the proxy as an auto-start Windows service (runs as LocalSystem)
-#   4. registers a logon Scheduled Task that runs the GPU sidecar in your user session
+#   3. registers the proxy as a MANUAL-start Windows service (runs as LocalSystem)
+#   4. registers two RunOnDemand tasks (sidecar + admin UI) in your user session;
+#      the service's supervisor starts them on service start and stops them on stop
+#   5. migrates a prior "LocalLfmDlpProxy" install (keeps its CA + audit DB)
 #
-# It deliberately does NOT start the service now: starting it would immediately
-# redirect api.anthropic.com -> 127.0.0.1 on this machine, which (until the sidecar
-# is healthy) would fail-closed and could disrupt any Claude session running right
-# now. The redirect activates on the next boot (auto-start) or when you start the
-# service manually. Run uninstall.ps1 to revert everything.
+# The service is MANUAL start and is NOT started by this installer: starting it
+# redirects api.anthropic.com -> 127.0.0.1, which would disrupt any Claude session
+# running right now. Start it deliberately (while logged in) with:
+#     Start-Service PromptGate     # brings up proxy + sidecar + admin UI together
+# Stopping the service tears all three down. Run uninstall.ps1 to revert everything.
 
 [CmdletBinding()]
 param(
-    [string]$ServiceName = "LocalLfmDlpProxy",
-    [string]$InstallRoot = (Join-Path $env:ProgramData "LocalLfmDlpProxy"),
+    [string]$ServiceName = "PromptGate",
+    [string]$InstallRoot = (Join-Path $env:ProgramData "PromptGate"),
     [ValidateSet("vulkan", "cpu")]
     [string]$Backend = "vulkan",
     [string]$Model = "LiquidAI/LFM2.5-1.2B-Instruct-GGUF:Q4_K_M",
@@ -43,9 +45,43 @@ $cfgDst = Join-Path $InstallRoot "config.yaml"
 $startDst = Join-Path $InstallRoot "start.ps1"
 $caDir = Join-Path $InstallRoot "ca"
 $caCrt = Join-Path $caDir "ca.crt"
+$sidecarTask = "PromptGate-Sidecar"
+$webTask = "PromptGate-WebUI"
+$webPort = 3939
 
-Write-Host "== Local LFM DLP Proxy installer ==" -ForegroundColor Cyan
+Write-Host "== PromptGate installer ==" -ForegroundColor Cyan
 Write-Host "Install root: $InstallRoot"
+
+# 0. Migrate a prior "LocalLfmDlpProxy" install to "PromptGate" (option A: keep the
+#    already-trusted CA + the audit DB; remove the old service + logon task). The
+#    data move must happen BEFORE we create the new InstallRoot below.
+$oldRoot = Join-Path $env:ProgramData "LocalLfmDlpProxy"
+$oldService = "LocalLfmDlpProxy"
+$oldTask = "LocalLfmDlpProxy-Sidecar"
+if (Get-Service -Name $oldService -ErrorAction SilentlyContinue) {
+    Write-Host "Migrating: removing old service '$oldService' ..."
+    & sc.exe stop $oldService | Out-Null
+    Start-Sleep -Seconds 1
+    & sc.exe delete $oldService | Out-Null
+}
+if (Get-ScheduledTask -TaskName $oldTask -ErrorAction SilentlyContinue) {
+    Write-Host "Migrating: removing old logon task '$oldTask' ..."
+    Unregister-ScheduledTask -TaskName $oldTask -Confirm:$false
+}
+if ((Test-Path $oldRoot) -and -not (Test-Path $InstallRoot)) {
+    Write-Host "Migrating data: $oldRoot -> $InstallRoot (keeps CA + audit DB)"
+    Move-Item -Path $oldRoot -Destination $InstallRoot
+}
+# Strip any stale old-marker hosts block left behind by a prior crash.
+$hostsPath = Join-Path $env:WINDIR "System32\drivers\etc\hosts"
+if (Test-Path $hostsPath) {
+    $h = Get-Content -Raw $hostsPath
+    $stripped = [regex]::Replace($h, "(?ms)\r?\n?# >>> LocalLfmDlpProxy >>>.*?# <<< LocalLfmDlpProxy <<<\r?\n?", "")
+    if ($stripped -ne $h) {
+        Set-Content -Path $hostsPath -Value $stripped -NoNewline
+        Write-Host "Migrating: stripped stale LocalLfmDlpProxy hosts block."
+    }
+}
 
 # 1. Build proxy.exe (or, with -SkipBuild, reuse one built elsewhere — e.g. a host
 #    build mapped into a Windows Sandbox, or a CI artifact, where Go is not present).
@@ -71,18 +107,62 @@ if (-not (Test-Path $cfgDst)) {
     Write-Host "Wrote default config: $cfgDst (edit as needed)"
 }
 
+# Copy the admin UI source (minus node_modules/.next) so the -WebOnly task can run
+# it from the install root. node_modules is excluded from the mirror, so an existing
+# one is preserved; the first -WebOnly run installs it if absent.
+$webSrc = Join-Path $repoDir "web"
+$webDst = Join-Path $InstallRoot "web"
+if (Test-Path $webSrc) {
+    Write-Host "Copying admin UI source -> $webDst ..."
+    & robocopy $webSrc $webDst /MIR /XD node_modules .next /NFL /NDL /NJH /NJS /NP | Out-Null
+    if ($LASTEXITCODE -ge 8) { throw "robocopy of web/ failed (code $LASTEXITCODE)" }
+    $global:LASTEXITCODE = 0
+}
+
 # Restrict the CA dir: disable inheritance, grant only SYSTEM + Administrators.
 & icacls $caDir /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" "Administrators:(OI)(CI)F" | Out-Null
 Write-Host "CA directory locked to SYSTEM + Administrators."
 
-# 3. Generate (or reuse) the Name-Constrained CA, then trust it machine-wide.
-Write-Host "Generating interception CA..."
+# Fix any migrated config paths (LocalLfmDlpProxy -> PromptGate); no-op on a fresh
+# config (already PromptGate). Preserves all other user settings.
+if (Test-Path $cfgDst) {
+    $c = Get-Content -Raw $cfgDst
+    $c2 = $c -replace 'LocalLfmDlpProxy', 'PromptGate'
+    if ($c2 -ne $c) {
+        Set-Content -Path $cfgDst -Value $c2 -NoNewline
+        Write-Host "Migrated config paths LocalLfmDlpProxy -> PromptGate."
+    }
+}
+
+# Enable supervise (service owns the user-session sidecar + admin UI). Append an
+# active block only if the config has no active 'supervise:' key yet.
+$cfgRaw = Get-Content -Raw $cfgDst
+if ($cfgRaw -notmatch '(?m)^\s*supervise:') {
+    $superviseBlock = @"
+
+# Added by install.ps1: the service starts/stops the user-session sidecar + admin UI.
+supervise:
+  enabled: true
+  sidecar_task: "$sidecarTask"
+  web_task: "$webTask"
+  web_port: $webPort
+  stop_timeout_ms: 8000
+"@
+    Add-Content -Path $cfgDst -Value $superviseBlock
+    Write-Host "Enabled supervise in $cfgDst (service owns sidecar + admin UI)."
+} else {
+    Write-Host "config already has a supervise block; leaving it as-is."
+}
+
+# 3. Generate (or reuse) the Name-Constrained CA, then trust it machine-wide. A
+#    migrated CA is reused as-is (trust is by key, not name), so no re-trust needed.
+Write-Host "Ensuring interception CA..."
 & $exeDst -config $cfgDst -init-ca | Out-Null
 if (-not (Test-Path $caCrt)) { throw "CA generation did not produce $caCrt" }
 Write-Host "Installing CA into Cert:\LocalMachine\Root ..."
 Import-Certificate -FilePath $caCrt -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
 
-# 4. Register the Windows service (LocalSystem, auto-start) with restart recovery.
+# 4. Register the Windows service (LocalSystem, MANUAL start) with restart recovery.
 if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
     Write-Host "Service $ServiceName already exists; reconfiguring."
     & sc.exe stop $ServiceName | Out-Null
@@ -90,36 +170,42 @@ if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
     Start-Sleep -Seconds 1
 }
 $binPath = '"{0}" -config "{1}"' -f $exeDst, $cfgDst
-New-Service -Name $ServiceName -BinaryPathName $binPath -DisplayName "Local LFM DLP Proxy" `
-    -Description "Inspects outbound Claude/Anthropic API traffic for sensitive-data egress (DLP)." `
-    -StartupType Automatic | Out-Null
+New-Service -Name $ServiceName -BinaryPathName $binPath -DisplayName "PromptGate" `
+    -Description "PromptGate: inspects outbound Claude/Anthropic API traffic for sensitive-data egress (DLP)." `
+    -StartupType Manual | Out-Null
 # Restart on crash so the hosts redirect is reconciled rather than left dangling.
 & sc.exe failure $ServiceName reset= 86400 actions= restart/5000/restart/5000/restart/5000 | Out-Null
-Write-Host "Service '$ServiceName' registered (auto-start, restart-on-failure)."
+Write-Host "Service '$ServiceName' registered (MANUAL start, restart-on-failure)."
 
-# 5. Register the logon Scheduled Task that runs the GPU sidecar in the user session.
-$taskName = "LocalLfmDlpProxy-Sidecar"
+# 5. Register the user-session RunOnDemand tasks (NO trigger — the service's
+#    supervisor runs them on start and ends them on stop). Interactive principal so
+#    the sidecar reaches the iGPU and the UI uses the per-user node install.
 $user = "$env:USERDOMAIN\$env:USERNAME"
-$psArgs = '-NoProfile -ExecutionPolicy Bypass -File "{0}" -SidecarOnly -Backend {1} -LlamaPort {2} -Model "{3}"' -f `
-    $startDst, $Backend, $LlamaPort, $Model
-$action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $psArgs -WorkingDirectory $InstallRoot
-$trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
 $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
-$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero)
-Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
-Write-Host "Logon task '$taskName' registered (runs the Vulkan sidecar in your session)."
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+    -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
+
+$sidecarArgs = '-NoProfile -ExecutionPolicy Bypass -File "{0}" -SidecarOnly -Backend {1} -LlamaPort {2} -Model "{3}"' -f `
+    $startDst, $Backend, $LlamaPort, $Model
+$sidecarAction = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $sidecarArgs -WorkingDirectory $InstallRoot
+Register-ScheduledTask -TaskName $sidecarTask -Action $sidecarAction -Principal $principal -Settings $settings -Force | Out-Null
+Write-Host "Task '$sidecarTask' registered (RunOnDemand; Vulkan sidecar in your session)."
+
+$webArgs = '-NoProfile -ExecutionPolicy Bypass -File "{0}" -WebOnly -Config "{1}"' -f $startDst, $cfgDst
+$webAction = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $webArgs -WorkingDirectory $InstallRoot
+Register-ScheduledTask -TaskName $webTask -Action $webAction -Principal $principal -Settings $settings -Force | Out-Null
+Write-Host "Task '$webTask' registered (RunOnDemand; admin UI in your session)."
 
 Write-Host ""
 Write-Host "Install complete." -ForegroundColor Green
 Write-Host "The hosts redirect + HTTPS interception activate when the service runs."
 if ($StartNow) {
-    Write-Host "Starting sidecar task and service now (-StartNow)..." -ForegroundColor Yellow
-    Start-ScheduledTask -TaskName $taskName
+    Write-Host "Starting the service now (-StartNow): proxy + sidecar + admin UI..." -ForegroundColor Yellow
     Start-Service -Name $ServiceName
-    Write-Host "Started. api.anthropic.com is now routed through the proxy."
+    Write-Host "Started. api.anthropic.com is now routed through PromptGate."
 } else {
     Write-Host "NOT started now (current Claude sessions stay untouched)." -ForegroundColor Yellow
-    Write-Host "It will auto-start on next boot/logon, or start manually with:"
-    Write-Host "    Start-ScheduledTask -TaskName $taskName    # sidecar (user session)"
-    Write-Host "    Start-Service -Name $ServiceName           # proxy (redirect + 443)"
+    Write-Host "Start it deliberately while logged in:"
+    Write-Host "    Start-Service PromptGate     # proxy + sidecar + admin UI together"
+    Write-Host "    Stop-Service  PromptGate     # stops all three"
 }

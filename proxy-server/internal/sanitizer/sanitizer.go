@@ -9,8 +9,8 @@ package sanitizer
 import (
 	"errors"
 
-	"local-lfm-dlp-proxy/internal/anthropic"
-	"local-lfm-dlp-proxy/internal/dlp"
+	"promptgate/internal/anthropic"
+	"promptgate/internal/dlp"
 )
 
 // ErrInvalidStructure means removal could not yield a forwardable message array

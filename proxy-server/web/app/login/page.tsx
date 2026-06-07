@@ -47,7 +47,7 @@ function LoginForm() {
             🦊
           </div>
           <div>
-            <h1 className="text-lg font-semibold text-zinc-100">FoxCo DLP</h1>
+            <h1 className="text-lg font-semibold text-zinc-100">PromptGate</h1>
             <p className="text-xs text-zinc-400">Admin dashboard</p>
           </div>
         </div>

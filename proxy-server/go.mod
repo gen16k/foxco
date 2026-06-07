@@ -1,4 +1,4 @@
-module local-lfm-dlp-proxy
+module promptgate
 
 go 1.26.3
 

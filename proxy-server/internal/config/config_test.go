@@ -26,8 +26,8 @@ func TestDefaultTransparentMode(t *testing.T) {
 	if len(c.TLS.NameConstraints) != 1 || c.TLS.NameConstraints[0] != "anthropic.com" {
 		t.Errorf("NameConstraints = %v, want [anthropic.com]", c.TLS.NameConstraints)
 	}
-	if c.Service.Name != "LocalLfmDlpProxy" {
-		t.Errorf("Service.Name = %q, want LocalLfmDlpProxy", c.Service.Name)
+	if c.Service.Name != "PromptGate" {
+		t.Errorf("Service.Name = %q, want PromptGate", c.Service.Name)
 	}
 	// Defaults must still uphold the security invariants.
 	if !c.DLP.FailClosed {
@@ -43,7 +43,7 @@ func TestExpandPercent(t *testing.T) {
 	cases := []struct {
 		in, want string
 	}{
-		{`%ProgramData%\LocalLfmDlpProxy\ca\ca.crt`, `C:\ProgramData\LocalLfmDlpProxy\ca\ca.crt`},
+		{`%ProgramData%\PromptGate\ca\ca.crt`, `C:\ProgramData\PromptGate\ca\ca.crt`},
 		{`no-vars-here`, `no-vars-here`},
 		{`%DEFINITELY_UNSET_VAR_XYZ%\x`, `%DEFINITELY_UNSET_VAR_XYZ%\x`}, // unknown left intact
 		{`100%%done`, `100%done`},                                        // %% -> literal %
