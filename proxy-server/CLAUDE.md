@@ -7,12 +7,12 @@ understand what changed and why.
 
 ## Project
 
-The **Local LFM DLP Proxy** — the `proxy-server/` component of FoxCo. It sits
+**PromptGate** — the `proxy-server/` component of FoxCo. It sits
 between **Claude Code** and the Anthropic API, inspects every outbound request, and
 asks a local **LFM** (Liquid Foundation Model, LFM2.5-1.2B via a llama.cpp sidecar)
 whether the content is safe to send. Sensitive egress is **blocked**; once-blocked
 history is sanitized so it never leaks on a later turn. Written in Go (module
-`local-lfm-dlp-proxy`); the target is Windows on an **AMD Ryzen AI series APU**
+`promptgate`); the target is Windows on an **AMD Ryzen AI series APU**
 (RDNA 3.5 integrated Radeon iGPU + XDNA2 NPU; e.g. Ryzen AI MAX+ 395 / Ryzen 5
 350), with LFM inference on the integrated Radeon iGPU via the **Vulkan** build of
 llama.cpp (CPU fallback). No NVIDIA/CUDA is used.

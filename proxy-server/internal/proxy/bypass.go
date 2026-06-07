@@ -3,7 +3,7 @@ package proxy
 import (
 	"strings"
 
-	"local-lfm-dlp-proxy/internal/anthropic"
+	"promptgate/internal/anthropic"
 )
 
 // containsBypassMarker reports whether the message carries the explicit user

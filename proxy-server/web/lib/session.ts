@@ -14,7 +14,7 @@ const secret =
 
 export const sessionOptions: SessionOptions = {
   password: secret,
-  cookieName: "foxco_admin_session",
+  cookieName: "promptgate_admin_session",
   cookieOptions: {
     httpOnly: true,
     // The proxy + UI run over http on localhost; secure cookies would be dropped.

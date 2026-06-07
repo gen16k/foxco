@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"local-lfm-dlp-proxy/internal/config"
+	"promptgate/internal/config"
 )
 
 func quietLog() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }

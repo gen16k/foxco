@@ -20,9 +20,9 @@ $share      = "C:\share"
 $transcript = Join-Path $share "transcript-claude.txt"
 $resultsPath= Join-Path $share "results-claude.json"
 $donePath   = Join-Path $share "DONE"
-$logFile    = Join-Path $env:ProgramData "LocalLfmDlpProxy\logs\proxy.log"
-$cfgFile    = Join-Path $env:ProgramData "LocalLfmDlpProxy\config.yaml"
-$caCert     = Join-Path $env:ProgramData "LocalLfmDlpProxy\ca\ca.crt"
+$logFile    = Join-Path $env:ProgramData "PromptGate\logs\proxy.log"
+$cfgFile    = Join-Path $env:ProgramData "PromptGate\config.yaml"
+$caCert     = Join-Path $env:ProgramData "PromptGate\ca\ca.crt"
 $repoSrc    = "C:\repo"
 $work       = "C:\work\proxy-server"
 $fakeKey    = "sk-ant-sandbox-invalid-0000000000"
@@ -117,7 +117,7 @@ try {
 
     $caOk = Test-Path $caCert
     Add-Result "install.ca_cert_present" "ca.crt exists for NODE_EXTRA_CA_CERTS" $caCert $caOk
-    $caStore = [bool](Get-ChildItem Cert:\LocalMachine\Root -ErrorAction SilentlyContinue | Where-Object { $_.Subject -like "*Local LFM DLP Proxy CA*" })
+    $caStore = [bool](Get-ChildItem Cert:\LocalMachine\Root -ErrorAction SilentlyContinue | Where-Object { $_.Subject -like "*PromptGate CA*" })
     Add-Result "install.ca_in_system_store" "CA in LocalMachine\Root" $caStore $caStore
 
     try { & "$work\proxyctl.ps1" start *>&1 | ForEach-Object { Write-Host "  $_" } } catch { Write-Host "start raised: $($_.Exception.Message)" }
@@ -188,12 +188,12 @@ try {
     try { & "$work\proxyctl.ps1" stop *>&1 | Out-Null } catch {}
     try { & "$work\uninstall.ps1" *>&1 | ForEach-Object { Write-Host "  $_" } } catch { Write-Host "uninstall raised: $($_.Exception.Message)" }
     ipconfig /flushdns | Out-Null
-    $svcGone = -not (Get-Service -Name LocalLfmDlpProxy -ErrorAction SilentlyContinue)
-    $caGone = -not (Get-ChildItem Cert:\LocalMachine\Root -ErrorAction SilentlyContinue | Where-Object { $_.Subject -like "*Local LFM DLP Proxy CA*" })
+    $svcGone = -not (Get-Service -Name PromptGate -ErrorAction SilentlyContinue)
+    $caGone = -not (Get-ChildItem Cert:\LocalMachine\Root -ErrorAction SilentlyContinue | Where-Object { $_.Subject -like "*PromptGate CA*" })
     $hostsTxt = Get-Content -Raw (Join-Path $env:SystemRoot "System32\drivers\etc\hosts") -ErrorAction SilentlyContinue
     Add-Result "uninstall.service_removed" "service gone" $svcGone $svcGone
     Add-Result "uninstall.ca_removed" "CA removed from store" $caGone $caGone
-    Add-Result "uninstall.hosts_clean" "hosts block stripped" (-not ($hostsTxt -match "LocalLfmDlpProxy")) (-not ($hostsTxt -match "LocalLfmDlpProxy"))
+    Add-Result "uninstall.hosts_clean" "hosts block stripped" (-not ($hostsTxt -match "PromptGate")) (-not ($hostsTxt -match "PromptGate"))
     Save-Results
 }
 catch {

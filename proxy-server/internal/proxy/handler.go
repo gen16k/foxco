@@ -12,10 +12,10 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"local-lfm-dlp-proxy/internal/anthropic"
-	"local-lfm-dlp-proxy/internal/dlp"
-	"local-lfm-dlp-proxy/internal/sanitizer"
-	"local-lfm-dlp-proxy/internal/storage"
+	"promptgate/internal/anthropic"
+	"promptgate/internal/dlp"
+	"promptgate/internal/sanitizer"
+	"promptgate/internal/storage"
 )
 
 const defaultMaxBody = 32 << 20 // 32 MiB

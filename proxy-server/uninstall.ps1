@@ -1,14 +1,14 @@
-# Local LFM DLP Proxy — uninstaller (run elevated). Reverts install.ps1:
-# stops + deletes the service, removes the logon task, strips the hosts-file
-# redirect block, removes the CA from the trust store, and (optionally) deletes
-# the data tree. After this, api.anthropic.com resolves normally again.
+# PromptGate — uninstaller (run elevated). Reverts install.ps1: stops + deletes the
+# service, removes the RunOnDemand tasks, strips the hosts-file redirect block,
+# removes the CA from the trust store, and (optionally) deletes the data tree. Also
+# cleans up a prior "LocalLfmDlpProxy" install. After this, api.anthropic.com
+# resolves normally again.
 
 [CmdletBinding()]
 param(
-    [string]$ServiceName = "LocalLfmDlpProxy",
-    [string]$InstallRoot = (Join-Path $env:ProgramData "LocalLfmDlpProxy"),
-    [string]$CaSubjectMatch = "*Local LFM DLP Proxy CA*",
-    [switch]$KeepData   # keep %ProgramData%\LocalLfmDlpProxy (config, audit DB, CA files)
+    [string]$ServiceName = "PromptGate",
+    [string]$InstallRoot = (Join-Path $env:ProgramData "PromptGate"),
+    [switch]$KeepData   # keep %ProgramData%\PromptGate (config, audit DB, CA files)
 )
 
 $ErrorActionPreference = "Continue"  # best-effort: remove as much as possible
@@ -22,65 +22,77 @@ function Assert-Admin {
 }
 
 Assert-Admin
-Write-Host "== Local LFM DLP Proxy uninstaller ==" -ForegroundColor Cyan
+Write-Host "== PromptGate uninstaller ==" -ForegroundColor Cyan
 
-# 1. Stop + delete the service.
-if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
-    & sc.exe stop $ServiceName | Out-Null
-    Start-Sleep -Seconds 1
-    & sc.exe delete $ServiceName | Out-Null
-    Write-Host "Service '$ServiceName' removed."
-} else {
-    Write-Host "Service '$ServiceName' not present."
+# 1. Stop + delete the service(s) — current and legacy.
+foreach ($svc in @($ServiceName, "LocalLfmDlpProxy")) {
+    if (Get-Service -Name $svc -ErrorAction SilentlyContinue) {
+        & sc.exe stop $svc | Out-Null
+        Start-Sleep -Seconds 1
+        & sc.exe delete $svc | Out-Null
+        Write-Host "Service '$svc' removed."
+    }
 }
 
-# 2. Remove the sidecar logon task.
-$taskName = "LocalLfmDlpProxy-Sidecar"
-if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
-    Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-    Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
-    Write-Host "Logon task '$taskName' removed."
+# 2. Remove the RunOnDemand / legacy logon tasks.
+foreach ($taskName in @("PromptGate-Sidecar", "PromptGate-WebUI", "LocalLfmDlpProxy-Sidecar")) {
+    if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
+        Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+        Write-Host "Task '$taskName' removed."
+    }
 }
 
-# 3. Strip the hosts-file redirect block (in case the service left it behind).
+# 3. Strip the hosts-file redirect block(s) — current and legacy markers.
 $hosts = Join-Path $env:SystemRoot "System32\drivers\etc\hosts"
-$begin = "# >>> LocalLfmDlpProxy >>>"
-$end = "# <<< LocalLfmDlpProxy <<<"
 if (Test-Path $hosts) {
     $content = Get-Content -Raw $hosts
-    if ($content -match [regex]::Escape($begin)) {
-        $lines = $content -split "`r?`n"
-        $out = New-Object System.Collections.Generic.List[string]
-        $inBlock = $false
-        foreach ($ln in $lines) {
-            $t = $ln.Trim()
-            if ($t -eq $begin) { $inBlock = $true; continue }
-            if ($t -eq $end) { $inBlock = $false; continue }
-            if (-not $inBlock) { $out.Add($ln) }
+    $orig = $content
+    foreach ($name in @("PromptGate", "LocalLfmDlpProxy")) {
+        $begin = "# >>> $name >>>"
+        $end = "# <<< $name <<<"
+        if ($content -match [regex]::Escape($begin)) {
+            $lines = $content -split "`r?`n"
+            $out = New-Object System.Collections.Generic.List[string]
+            $inBlock = $false
+            foreach ($ln in $lines) {
+                $t = $ln.Trim()
+                if ($t -eq $begin) { $inBlock = $true; continue }
+                if ($t -eq $end) { $inBlock = $false; continue }
+                if (-not $inBlock) { $out.Add($ln) }
+            }
+            $content = ($out -join "`r`n").TrimEnd("`r", "`n") + "`r`n"
         }
-        # Use CRLF (hosts file convention) and drop trailing blank lines.
-        $joined = ($out -join "`r`n").TrimEnd("`r", "`n") + "`r`n"
-        Set-Content -Path $hosts -Value $joined -NoNewline -Encoding ascii
-        Write-Host "Removed hosts-file redirect block."
+    }
+    if ($content -ne $orig) {
+        Set-Content -Path $hosts -Value $content -NoNewline -Encoding ascii
+        Write-Host "Removed hosts-file redirect block(s)."
     } else {
         Write-Host "No hosts-file redirect block present."
     }
 }
 
-# 4. Remove the CA from the machine trust store.
+# 4. Remove the CA(s) from the machine trust store — current and legacy subjects.
 $removed = 0
-Get-ChildItem Cert:\LocalMachine\Root | Where-Object { $_.Subject -like $CaSubjectMatch } | ForEach-Object {
+Get-ChildItem Cert:\LocalMachine\Root | Where-Object {
+    $_.Subject -like "*PromptGate CA*" -or $_.Subject -like "*Local LFM DLP Proxy CA*"
+} | ForEach-Object {
     Remove-Item $_.PSPath -Force
     $removed++
 }
 Write-Host "Removed $removed CA certificate(s) from LocalMachine\Root."
 
-# 5. Remove the data tree.
-if (-not $KeepData -and (Test-Path $InstallRoot)) {
-    Remove-Item -Recurse -Force $InstallRoot
-    Write-Host "Removed data tree: $InstallRoot"
-} elseif ($KeepData) {
-    Write-Host "Kept data tree (-KeepData): $InstallRoot"
+# 5. Remove the data tree(s).
+$roots = @($InstallRoot)
+$legacyRoot = Join-Path $env:ProgramData "LocalLfmDlpProxy"
+if ($legacyRoot -ne $InstallRoot) { $roots += $legacyRoot }
+foreach ($root in $roots) {
+    if (-not $KeepData -and (Test-Path $root)) {
+        Remove-Item -Recurse -Force $root
+        Write-Host "Removed data tree: $root"
+    } elseif ($KeepData -and (Test-Path $root)) {
+        Write-Host "Kept data tree (-KeepData): $root"
+    }
 }
 
 Write-Host ""

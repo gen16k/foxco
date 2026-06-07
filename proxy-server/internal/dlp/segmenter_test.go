@@ -3,7 +3,7 @@ package dlp
 import (
 	"testing"
 
-	"local-lfm-dlp-proxy/internal/anthropic"
+	"promptgate/internal/anthropic"
 )
 
 func mustMessages(t *testing.T, body string) []anthropic.Message {

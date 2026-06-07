@@ -1,8 +1,8 @@
-# Local LFM DLP Proxy for Claude Code 仕様書
+# PromptGate for Claude Code 仕様書
 
 ## 1. 概要
 
-本仕様書は、Windows上で動作するローカルDLPプロキシサーバー **Local LFM DLP Proxy** の設計仕様を定義する。
+本仕様書は、Windows上で動作するローカルDLPプロキシサーバー **PromptGate** の設計仕様を定義する。
 
 本プロキシは、Claude Code から Anthropic Claude API へ送信される通信をローカルで受け取り、Messages API リクエスト内の会話本文・履歴・tool result・system message などを検査する。
 
@@ -130,7 +130,7 @@ Claude Code
   |
   | ANTHROPIC_BASE_URL=http://127.0.0.1:8787
   v
-Local LFM DLP Proxy  Go
+PromptGate  Go
   |
   +-- Anthropic Messages API Receiver
   +-- Request Parser
@@ -780,7 +780,7 @@ SQLite
 保存先:
 
 ```text
-%LOCALAPPDATA%\LocalLfmDlpProxy\state\dlp.db
+%LOCALAPPDATA%\PromptGate\state\dlp.db
 ```
 
 将来拡張候補:
@@ -929,7 +929,7 @@ ProxyはAPIキーを永続保存しない。
 設定ファイル:
 
 ```text
-%LOCALAPPDATA%\LocalLfmDlpProxy\config.yaml
+%LOCALAPPDATA%\PromptGate\config.yaml
 ```
 
 例:
@@ -965,7 +965,7 @@ cache:
 
 storage:
   type: "sqlite"
-  path: "%LOCALAPPDATA%\\LocalLfmDlpProxy\\state\\dlp.db"
+  path: "%LOCALAPPDATA%\\PromptGate\\state\\dlp.db"
   store_raw_text: false
   retention_days: 30
 
@@ -1044,7 +1044,7 @@ GET /admin/api/model/status
 ### 16.1 ディレクトリ構成案
 
 ```text
-local-lfm-dlp-proxy/
+promptgate/
 ├── cmd/
 │   ├── proxy/
 │   │   └── main.go
@@ -1650,7 +1650,7 @@ LFMモデルがAMD NPUで期待通り動作しない可能性がある。
 ## 27. 用語
 
 ```text
-Local LFM DLP Proxy
+PromptGate
   本仕様で定義するGo製ローカルDLPプロキシ。
 
 LFM

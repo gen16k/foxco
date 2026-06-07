@@ -19,8 +19,8 @@ import (
 const DefaultPath = `C:\Windows\System32\drivers\etc\hosts`
 
 const (
-	beginMarker = "# >>> LocalLfmDlpProxy >>>"
-	endMarker   = "# <<< LocalLfmDlpProxy <<<"
+	beginMarker = "# >>> PromptGate >>>"
+	endMarker   = "# <<< PromptGate <<<"
 )
 
 // Manager edits a single marker-delimited block in the hosts file at path,

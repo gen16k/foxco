@@ -20,9 +20,9 @@ $cache      = "C:\cache"
 $transcript = Join-Path $share "transcript-lfm.txt"
 $resultsPath= Join-Path $share "results-lfm.json"
 $donePath   = Join-Path $share "DONE"
-$logFile    = Join-Path $env:ProgramData "LocalLfmDlpProxy\logs\proxy.log"
-$cfgFile    = Join-Path $env:ProgramData "LocalLfmDlpProxy\config.yaml"
-$caCert     = Join-Path $env:ProgramData "LocalLfmDlpProxy\ca\ca.crt"
+$logFile    = Join-Path $env:ProgramData "PromptGate\logs\proxy.log"
+$cfgFile    = Join-Path $env:ProgramData "PromptGate\config.yaml"
+$caCert     = Join-Path $env:ProgramData "PromptGate\ca\ca.crt"
 $repoSrc    = "C:\repo"
 $work       = "C:\work\proxy-server"
 $apiBase    = "https://api.anthropic.com"
@@ -113,7 +113,7 @@ try {
     $c = $c -replace '(?m)^(\s*classify_timeout_ms:\s*)\d+', '${1}30000'
     $c = $c -replace '(?m)^(\s*health_timeout_ms:\s*)\d+', '${1}5000'
     [System.IO.File]::WriteAllText($cfgFile, $c, (New-Object System.Text.UTF8Encoding($false)))
-    Add-Result "install.ca_in_system_store" "CA in LocalMachine\Root" "" ([bool](Get-ChildItem Cert:\LocalMachine\Root -EA SilentlyContinue | Where-Object { $_.Subject -like "*Local LFM DLP Proxy CA*" }))
+    Add-Result "install.ca_in_system_store" "CA in LocalMachine\Root" "" ([bool](Get-ChildItem Cert:\LocalMachine\Root -EA SilentlyContinue | Where-Object { $_.Subject -like "*PromptGate CA*" }))
     Save-Results
 
     # ----- CPU llama.cpp sidecar + LFM model (cached) -----
@@ -243,8 +243,8 @@ try {
     try { & "$work\proxyctl.ps1" stop *>&1 | Out-Null } catch {}
     try { & "$work\uninstall.ps1" *>&1 | ForEach-Object { Write-Host "  $_" } } catch { Write-Host "uninstall raised: $($_.Exception.Message)" }
     ipconfig /flushdns | Out-Null
-    Add-Result "uninstall.service_removed" "service gone" "" (-not (Get-Service -Name LocalLfmDlpProxy -EA SilentlyContinue))
-    Add-Result "uninstall.ca_removed" "CA removed from store" "" (-not (Get-ChildItem Cert:\LocalMachine\Root -EA SilentlyContinue | Where-Object { $_.Subject -like "*Local LFM DLP Proxy CA*" }))
+    Add-Result "uninstall.service_removed" "service gone" "" (-not (Get-Service -Name PromptGate -EA SilentlyContinue))
+    Add-Result "uninstall.ca_removed" "CA removed from store" "" (-not (Get-ChildItem Cert:\LocalMachine\Root -EA SilentlyContinue | Where-Object { $_.Subject -like "*PromptGate CA*" }))
     Save-Results
 }
 catch {

@@ -1,5 +1,41 @@
 # Decision Log
 
+## サービス一元ライフサイクル: サイドカー/UI はユーザセッションタスク経由 (20260607 12:10)
+
+### Status
+Accepted
+
+### Context
+
+proxy=Windows サービス(従来 Automatic)、サイドカー=ログオン Scheduled Task、admin UI=手動、の
+3 ライフサイクル分離により「ログオンでサイドカーだけ起動・proxy は停止」状態が発生した。一括の
+起動/停止が欲しい。一方、GPU サイドカー(Vulkan)と node 製 admin UI は Session-0 サービスからは
+iGPU/ユーザ環境に届かず、ユーザセッションで動かす制約がある。
+
+### Decision
+
+proxy は引き続き Windows サービス（hosts/`:443`/CA に LocalSystem 権限が要る）。サービスに
+スーパバイザを内蔵し、`start()` で `PromptGate-Sidecar` / `PromptGate-WebUI` の **RunOnDemand**
+タスク（Interactive 主体＝ユーザセッション＝iGPU 可）を `schtasks /Run` で起動、`stop()` で
+`schtasks /End` ＋ **ポートスコープの `taskkill /T /F`** フォールバックで確実に停止する
+（`/End` 単独では子ツリーが孤児化し得るため）。`-SidecarOnly`/`-WebOnly` はフォアグラウンド実行に
+してタスクのプロセスツリーに子を載せる。ログオン自動起動タスクは廃止し、サービスは **Manual**
+（boot 自動起動なし）＝稼働中 Claude セッションを不意の透過インターセプトで壊さない。
+`supervise.enabled` の既定は false（コンソール/dev は `start.ps1` がインライン起動するため）で、
+インストール時のみ true を配備 config に追記。
+
+### Consequences
+
+- 利点：`Start-Service PromptGate` で proxy+サイドカー+admin UI が揃い、`Stop-Service` で全停止。
+  iGPU アクセスは維持。Manual 起動で不意の起動を防止。
+- 制約：サービス起動時にユーザがログオンしている必要がある（未ログオン時はタスクが実体起動せず、
+  proxy は上がるが fail-closed。回復はログオン後 `proxyctl restart`）。
+- 停止の確実性は taskkill ツリー＋ポート(8791/3939, image 名スコープ)フォールバックで担保。
+- 既知の別課題：透過(:443 のみ)では admin UI が admin API に未到達（`docs/todo.md`）。
+
+### Related Records
+- docs/records/20260607/1210-promptgate-service-lifecycle-rename.md
+
 ## 明示的ユーザーバイパスマーカー（誤検知の手動回避）+ admin の BYPASS 表示 (20260607 11:46)
 
 ### Status

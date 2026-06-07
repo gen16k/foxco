@@ -13,10 +13,10 @@ import (
 	"sync"
 	"testing"
 
-	"local-lfm-dlp-proxy/internal/anthropic"
-	"local-lfm-dlp-proxy/internal/dlp"
-	"local-lfm-dlp-proxy/internal/inference"
-	"local-lfm-dlp-proxy/internal/storage"
+	"promptgate/internal/anthropic"
+	"promptgate/internal/dlp"
+	"promptgate/internal/inference"
+	"promptgate/internal/storage"
 )
 
 // mockUpstream records every request body it receives so tests can assert that

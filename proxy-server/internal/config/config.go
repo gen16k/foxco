@@ -29,6 +29,7 @@ type Config struct {
 	Logging   Logging   `yaml:"logging"`
 	Service   Service   `yaml:"service"`
 	Admin     Admin     `yaml:"admin"`
+	Supervise Supervise `yaml:"supervise"`
 }
 
 type Server struct {
@@ -126,6 +127,23 @@ type Admin struct {
 	AuthToken string `yaml:"auth_token"`
 }
 
+// Supervise lets the Windows service own the lifecycle of the user-session
+// sidecar (llama-server) and admin web UI. Those must run in the interactive
+// session — a Session-0 service cannot reach the iGPU (Vulkan), and node is
+// per-user — so the service triggers the named RunOnDemand scheduled tasks on
+// start and terminates them on stop (see cmd/proxy/supervisor_windows.go).
+//
+// Keep Enabled=false for console/dev runs: start.ps1 launches the sidecar + UI
+// inline there, and a second trigger would contend for the ports. Only the
+// installed service config sets Enabled=true.
+type Supervise struct {
+	Enabled       bool   `yaml:"enabled"`
+	SidecarTask   string `yaml:"sidecar_task"`    // RunOnDemand task that runs `start.ps1 -SidecarOnly`
+	WebTask       string `yaml:"web_task"`        // RunOnDemand task that runs `start.ps1 -WebOnly`
+	WebPort       int    `yaml:"web_port"`        // admin UI port, used for the stop force-kill fallback
+	StopTimeoutMS int    `yaml:"stop_timeout_ms"` // grace before force-killing a lingering child by port
+}
+
 // Default returns a configuration with the agreed safe defaults.
 func Default() Config {
 	cfg := Config{
@@ -137,8 +155,8 @@ func Default() Config {
 			ManageHostsFile: true,
 		},
 		TLS: TLS{
-			CACertPath:      `%ProgramData%\LocalLfmDlpProxy\ca\ca.crt`,
-			CAKeyPath:       `%ProgramData%\LocalLfmDlpProxy\ca\ca.key`,
+			CACertPath:      `%ProgramData%\PromptGate\ca\ca.crt`,
+			CAKeyPath:       `%ProgramData%\PromptGate\ca\ca.key`,
 			NameConstraints: []string{"anthropic.com"},
 		},
 		Upstream: Upstream{
@@ -170,13 +188,20 @@ func Default() Config {
 			Type: "sqlite",
 			// Under the Windows service (LocalSystem) %LOCALAPPDATA% resolves to
 			// the systemprofile; use the machine-wide %ProgramData% tree instead.
-			Path:          `%ProgramData%\LocalLfmDlpProxy\state\dlp.db`,
+			Path:          `%ProgramData%\PromptGate\state\dlp.db`,
 			StoreRawText:  false,
 			RetentionDays: 30,
 		},
 		Logging: Logging{Level: "info", RedactSensitiveValues: true},
-		Service: Service{Name: "LocalLfmDlpProxy"},
+		Service: Service{Name: "PromptGate"},
 		Admin:   Admin{Enabled: true},
+		Supervise: Supervise{
+			Enabled:       false,
+			SidecarTask:   "PromptGate-Sidecar",
+			WebTask:       "PromptGate-WebUI",
+			WebPort:       3939,
+			StopTimeoutMS: 8000,
+		},
 	}
 	cfg.expandPaths()
 	return cfg

@@ -24,7 +24,7 @@ export function TopBar() {
             <span className="text-lg" aria-hidden>
               🦊
             </span>
-            <span className="font-semibold text-zinc-100">FoxCo DLP</span>
+            <span className="font-semibold text-zinc-100">PromptGate</span>
           </div>
           <NavTabs />
         </div>

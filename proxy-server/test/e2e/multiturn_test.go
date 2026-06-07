@@ -52,11 +52,11 @@ import (
 	"testing"
 	"time"
 
-	"local-lfm-dlp-proxy/internal/anthropic"
-	"local-lfm-dlp-proxy/internal/dlp"
-	"local-lfm-dlp-proxy/internal/inference"
-	"local-lfm-dlp-proxy/internal/proxy"
-	"local-lfm-dlp-proxy/internal/storage"
+	"promptgate/internal/anthropic"
+	"promptgate/internal/dlp"
+	"promptgate/internal/inference"
+	"promptgate/internal/proxy"
+	"promptgate/internal/storage"
 )
 
 // memoMarker is a unique token embedded in the sensitive turn so we can grep any

@@ -1,4 +1,4 @@
-# Local LFM DLP Proxy
+# PromptGate
 
 A local Data-Loss-Prevention proxy that sits between **Claude Code** and the
 Anthropic API. It inspects every outbound request, asks a local **LFM (Liquid
@@ -114,15 +114,20 @@ redirects `api.anthropic.com` to the proxy and terminates TLS with a locally-tru
 CA. One-time setup, from an **elevated** PowerShell in this directory:
 
 ```powershell
-.\install.ps1          # builds, installs the CA, registers the service + sidecar logon task
+.\install.ps1          # builds, installs the CA, registers the MANUAL-start service
+                       # + two user-session RunOnDemand tasks (sidecar + admin UI)
 ```
 
-`install.ps1` does **not** start the service immediately (so it won't disturb a
-running Claude session). The redirect activates on next boot/logon, or start it now:
+`install.ps1` registers the service as **manual start** and does **not** start it
+(so it won't disturb a running Claude session, and it never auto-starts at boot).
+The service owns the whole lifecycle: starting it triggers the user-session sidecar
+and admin UI; stopping it tears all three down. Start it deliberately while logged
+in (the sidecar needs your interactive session for the iGPU):
 
 ```powershell
-.\proxyctl.ps1 start   # start sidecar (your session) + service (redirect + :443)
-.\proxyctl.ps1 status  # service / sidecar / redirect state
+.\proxyctl.ps1 start   # Start-Service PromptGate -> proxy + sidecar + admin UI
+.\proxyctl.ps1 status  # service / sidecar / web / redirect state
+.\proxyctl.ps1 stop    # stop the service -> tears down all three
 .\uninstall.ps1        # revert everything (elevated)
 ```
 
