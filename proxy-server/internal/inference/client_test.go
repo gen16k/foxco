@@ -93,6 +93,54 @@ func TestLlamaClientErrorOnStatus(t *testing.T) {
 	}
 }
 
+// A profile with an empty System must produce a request with NO system message
+// (the extraction checkpoint is tuned to need none); a profile with a System must
+// still include it. This locks the client's conditional message construction.
+func TestClassifyOmitsSystemMessageWhenProfileHasNone(t *testing.T) {
+	capture := func(p PromptProfile) []chatMessage {
+		var got chatRequest
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewDecoder(r.Body).Decode(&got)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"choices": []map[string]any{{"message": map[string]any{"content": `{}`}}},
+			})
+		}))
+		t.Cleanup(srv.Close)
+		c := NewLlamaClient(srv.URL, "m", 2000, 500)
+		c.SetProfile(p)
+		// The request is captured server-side before the canned reply is parsed, so
+		// a profile-specific parse outcome of "{}" is irrelevant here — ignore it.
+		_, _ = c.Classify(context.Background(), dlp.ClassifyInput{Text: "x"})
+		return got.Messages
+	}
+
+	roles := func(msgs []chatMessage) (hasSystem bool, userContent string) {
+		for _, m := range msgs {
+			if m.Role == "system" {
+				hasSystem = true
+			}
+			if m.Role == "user" {
+				userContent = m.Content
+			}
+		}
+		return
+	}
+
+	// Extraction profile: empty System -> no system message, raw text in user turn.
+	hasSys, user := roles(capture(jpConfidentialExtractionProfile()))
+	if hasSys {
+		t.Error("extraction profile (empty System) must send NO system message")
+	}
+	if user != "x" {
+		t.Errorf("user turn = %q, want raw text %q", user, "x")
+	}
+
+	// Default classifier profile: non-empty System -> system message present.
+	if hasSys, _ := roles(capture(DefaultProfile())); !hasSys {
+		t.Error("default profile (non-empty System) must send a system message")
+	}
+}
+
 func TestKeywordClassifier(t *testing.T) {
 	k := NewKeywordClassifier()
 	ng, _ := k.Classify(context.Background(), dlp.ClassifyInput{Text: "DB_PASSWORD=hunter2"})

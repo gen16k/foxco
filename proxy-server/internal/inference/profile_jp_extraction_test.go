@@ -130,7 +130,12 @@ func TestJPExtractionProfileRegistered(t *testing.T) {
 	if p.Name != "jp_confidential_extraction" {
 		t.Fatalf("name = %q", p.Name)
 	}
-	if p.System == "" || len(p.Schema) == 0 || p.BuildUser == nil || p.Parse == nil {
+	// This checkpoint is tuned to need no system prompt: System must be empty so
+	// the client omits the system message (sending one would be off-distribution).
+	if p.System != "" {
+		t.Fatalf("System should be empty for the extraction profile, got %q", p.System)
+	}
+	if len(p.Schema) == 0 || p.BuildUser == nil || p.Parse == nil {
 		t.Fatal("profile fields incomplete")
 	}
 	if p.MaxTokens != 384 {

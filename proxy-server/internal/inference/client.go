@@ -105,14 +105,20 @@ func (c *LlamaClient) Classify(ctx context.Context, in dlp.ClassifyInput) (dlp.C
 		defer cancel()
 	}
 
+	// A profile may carry no system prompt (e.g. a checkpoint fine-tuned to need
+	// none): omit the system message entirely rather than sending an empty one, so
+	// the request matches the model's training distribution.
+	msgs := make([]chatMessage, 0, 2)
+	if c.profile.System != "" {
+		msgs = append(msgs, chatMessage{Role: "system", Content: c.profile.System})
+	}
+	msgs = append(msgs, chatMessage{Role: "user", Content: c.profile.BuildUser(in)})
+
 	body := chatRequest{
 		Model:       c.model,
 		Temperature: 0,
 		MaxTokens:   c.maxTokens(),
-		Messages: []chatMessage{
-			{Role: "system", Content: c.profile.System},
-			{Role: "user", Content: c.profile.BuildUser(in)},
-		},
+		Messages:    msgs,
 	}
 	if len(c.profile.Schema) > 0 {
 		body.ResponseFormat = &responseFormat{
