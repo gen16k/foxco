@@ -1,6 +1,6 @@
 package dlp
 
-import "local-lfm-dlp-proxy/internal/anthropic"
+import "promptgate/internal/anthropic"
 
 // Segment splits a message list into the atomic text units the proxy inspects.
 //

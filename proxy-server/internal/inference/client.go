@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"local-lfm-dlp-proxy/internal/dlp"
+	"promptgate/internal/dlp"
 )
 
 // LlamaClient is a dlp.Classifier backed by a llama.cpp server.

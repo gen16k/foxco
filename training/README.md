@@ -1,46 +1,71 @@
 # Training
 
-LFM Guardの学習データ、ファインチューニング、評価、モデル成果物を置くフォルダです。
+This folder contains PromptGate training, evaluation, and model comparison assets.
 
-## Goal
+Tagline: PromptGate — A local LFM guard that blocks sensitive prompts before they reach cloud LLMs.
 
-LFM2.5-1.2B-JP-202606を、単純なPII抽出だけでなく「日本語の社内文脈に基づく送信前リスク判定」ができるGuardモデルとして調整します。
+PromptGate uses `LFM2.5-1.2B-JP-202606` as a local guard model that detects sensitive information before a prompt is sent to a cloud LLM.
 
-## Planned Components
+## Dataset
 
-- `data/`: 学習/検証/デモ用データ
-- `scripts/`: データ生成、整形、学習、推論、評価スクリプト
-- `evals/`: 評価セット、評価レポート、比較結果
-- `models/`: ローカルで使うモデル設定、LoRA/checkpoint参照、量子化モデルのメモ
+- Hugging Face: https://huggingface.co/datasets/akiFQC/japanese-confidential-information-extraction-sft
+- Checked: 2026-06-06 JST
+- Splits: train 38,852 rows, validation 2,045 rows
+- Format: `messages` with system/user/assistant turns
+- Assistant output: JSON string with all 11 sensitive entity keys
 
-## Label Design
+## Entity Schema
 
-まずは以下のアクション分類を狙います。
+All keys are required. Values must be arrays. Empty categories must be `[]`.
 
-- `allow`: 送信してよい
-- `block`: 送信を止める
-- `mask`: マスクして送る
-- `local_answer`: クラウドへ送らずローカル回答する
+- `address`
+- `company_name`
+- `email_address`
+- `human_name`
+- `phone_number`
+- `account_identifier`
+- `network_identifier`
+- `system_config`
+- `project_info`
+- `financial_info`
+- `transaction_id`
 
-追加で返したい情報:
+## Compared Models
 
-- `risk_score`: 0.0から1.0
-- `entity_types`: PII / credential / confidential_project / customer / source_code / financial / medicalなど
-- `reason`: ユーザー向けの短い説明
-- `safe_prompt`: マスキングまたは一般化した安全なプロンプト
-
-## Comparison Targets
-
-デモで差分を見せるため、以下を比較対象にします。
-
-- Regex only
 - `LiquidAI/LFM2-350M-PII-Extract-JP-GGUF`
-- Base LFM2.5-1.2B-JP-202606
-- Fine-tuned FoxCo LFM Guard
+- `LiquidAI/LFM2.5-1.2B-JP-GGUF`
+- `akiFQC/LFM2-350M-Conf-Extract-Japanese` (previous fine-tuned 350M model, comparison target)
+- `akiFQC/LFM2.5-1.2B-JP-202606-Conf-Extract` (fine-tuned PromptGate model, not evaluated in this repo yet)
 
-## First Tasks
+## Current Evaluation
 
-- 疑似社内データと危険プロンプトを作る
-- `allow/block/mask/local_answer` の小さな評価セットを作る
-- 既存PIIモデルで拾えるケース/拾えないケースを整理する
-- p50/p95レイテンシ、Precision/Recall、クラウド送信token削減率を測る準備をする
+Evaluation assets are in `training/evaluation/`.
+
+Current baseline result is an initial check on a seed-fixed random 10-case validation subset. It is reproducible, but not a final benchmark. See `training/evaluation/Evaluation_Result.md` for limitations.
+
+| Model | Cases | Exact Case Correct | Expected Entities | Correct Entities | Entity Correct Rate |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `LiquidAI/LFM2-350M-PII-Extract-JP-GGUF` | 10 | 2 | 59 | 18 | 0.31 |
+| `LiquidAI/LFM2.5-1.2B-JP-GGUF` | 10 | 0 | 59 | 16 | 0.27 |
+
+W&B run:
+
+https://wandb.ai/aki310-sony-semiconductors/promptgate/runs/k25spzc0
+
+## Reproduce
+
+Use `uv`, not `pip`.
+
+For W&B logging, copy `.env.example` to `.env` and set `WANDB_API_KEY`.
+
+```powershell
+uv run --with datasets python training\evaluation\prepare_eval_from_hf.py --sample random --seed 20260607 --limit 10 --out training\evaluation\validation_10_eval.jsonl
+python training\evaluation\run_ollama_baselines.py --input training\evaluation\validation_10_eval.jsonl --out training\evaluation\validation_10_ollama_outputs.jsonl
+uv run --with wandb python training\evaluation\evaluate_and_log_wandb.py --input training\evaluation\validation_10_ollama_outputs.jsonl --out training\evaluation\validation_10_ollama.metrics.json --wandb-mode online --wandb-project promptgate --wandb-run-name promptgate-validation10-random-seed20260607
+```
+
+## Next Tasks
+
+- Add the previous fine-tuned model `akiFQC/LFM2-350M-Conf-Extract-Japanese` as a comparison row, if time allows.
+- Add `akiFQC/LFM2.5-1.2B-JP-202606-Conf-Extract` outputs and re-run evaluation.
+- Select demo cases where the fine-tuned model catches entities missed by the baselines.

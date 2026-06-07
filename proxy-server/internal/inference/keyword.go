@@ -4,7 +4,7 @@ import (
 	"context"
 	"regexp"
 
-	"local-lfm-dlp-proxy/internal/dlp"
+	"promptgate/internal/dlp"
 )
 
 // KeywordClassifier is a deterministic stand-in for the LFM, used when no model

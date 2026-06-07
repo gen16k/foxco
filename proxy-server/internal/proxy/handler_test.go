@@ -2,17 +2,21 @@ package proxy
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
-	"local-lfm-dlp-proxy/internal/anthropic"
-	"local-lfm-dlp-proxy/internal/dlp"
-	"local-lfm-dlp-proxy/internal/inference"
+	"promptgate/internal/anthropic"
+	"promptgate/internal/dlp"
+	"promptgate/internal/inference"
+	"promptgate/internal/storage"
 )
 
 // mockUpstream records every request body it receives so tests can assert that
@@ -53,7 +57,59 @@ func newTestHandler(upstreamURL string) *Handler {
 	det := dlp.NewDetector(dlp.NewRuleEngine(), true, inference.NewKeywordClassifier(), dlp.NewCache(64), true)
 	fwd := anthropic.NewForwarder(upstreamURL, 5000)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return New(det, fwd, nil, log, true, "test", "keyword")
+	return New(det, fwd, nil, log, true, "test", "keyword", false, BypassConfig{})
+}
+
+// bypassMarker is the override marker the bypass tests inject.
+const bypassMarker = "#dlp-allow"
+
+// newBypassHandler is newTestHandler with the override marker enabled.
+func newBypassHandler(upstreamURL string) *Handler {
+	det := dlp.NewDetector(dlp.NewRuleEngine(), true, inference.NewKeywordClassifier(), dlp.NewCache(64), true)
+	fwd := anthropic.NewForwarder(upstreamURL, 5000)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	return New(det, fwd, nil, log, true, "test", "keyword", false, BypassConfig{Enabled: true, Marker: bypassMarker})
+}
+
+// newCaptureHandler wires a handler to a real temp audit store so tests can
+// assert exactly what was (or was not) persisted. storeRaw toggles store_raw_text.
+func newCaptureHandler(t *testing.T, upstreamURL string, storeRaw bool) (*Handler, *storage.Store) {
+	t.Helper()
+	st, err := storage.Open(filepath.Join(t.TempDir(), "dlp.db"), 0)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { st.Close() })
+	det := dlp.NewDetector(dlp.NewRuleEngine(), true, inference.NewKeywordClassifier(), dlp.NewCache(64), true)
+	fwd := anthropic.NewForwarder(upstreamURL, 5000)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	return New(det, fwd, st, log, true, "test", "keyword", storeRaw, BypassConfig{}), st
+}
+
+// newBypassCaptureHandler is newCaptureHandler with the override marker enabled.
+func newBypassCaptureHandler(t *testing.T, upstreamURL string) (*Handler, *storage.Store) {
+	t.Helper()
+	st, err := storage.Open(filepath.Join(t.TempDir(), "dlp.db"), 0)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { st.Close() })
+	det := dlp.NewDetector(dlp.NewRuleEngine(), true, inference.NewKeywordClassifier(), dlp.NewCache(64), true)
+	fwd := anthropic.NewForwarder(upstreamURL, 5000)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	return New(det, fwd, st, log, true, "test", "keyword", false, BypassConfig{Enabled: true, Marker: bypassMarker}), st
+}
+
+func onlyEvent(t *testing.T, st *storage.Store) storage.EventRow {
+	t.Helper()
+	page, err := st.Query(storage.EventFilter{})
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if page.Total != 1 {
+		t.Fatalf("expected 1 event, got %d", page.Total)
+	}
+	return page.Events[0]
 }
 
 func do(t *testing.T, h *Handler, path, body string) *httptest.ResponseRecorder {
@@ -154,6 +210,60 @@ func TestCountTokensBlockReturnsEstimateNoEgress(t *testing.T) {
 	}
 }
 
+// errClassifier always fails, simulating the LFM sidecar being down/warming.
+type errClassifier struct{}
+
+func (errClassifier) Classify(context.Context, dlp.ClassifyInput) (dlp.ClassifyOutput, error) {
+	return dlp.ClassifyOutput{}, errors.New("sidecar unavailable")
+}
+
+func TestPassthroughForwardsUnknownPath(t *testing.T) {
+	var gotMethod, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		_, _ = w.Write([]byte("model-list"))
+	}))
+	defer srv.Close()
+	h := newTestHandler(srv.URL)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/models?limit=2", nil)
+	rec := httptest.NewRecorder()
+	mux := http.NewServeMux()
+	h.Register(mux)
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if gotMethod != http.MethodGet || gotPath != "/v1/models" {
+		t.Errorf("passthrough did not preserve method/path: %s %s", gotMethod, gotPath)
+	}
+	if !strings.Contains(rec.Body.String(), "model-list") {
+		t.Errorf("client did not receive upstream passthrough body: %s", rec.Body.String())
+	}
+}
+
+func TestClassifierWarmingFailsClosedWithDistinctMessage(t *testing.T) {
+	up := newMockUpstream()
+	defer up.srv.Close()
+	det := dlp.NewDetector(dlp.NewRuleEngine(), true, errClassifier{}, dlp.NewCache(64), true)
+	fwd := anthropic.NewForwarder(up.srv.URL, 5000)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	h := New(det, fwd, nil, log, true, "test", "llama", false, BypassConfig{})
+
+	rec := do(t, h, "/v1/messages", `{"model":"claude","messages":[{"role":"user","content":"please help me refactor"}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if up.calls != 0 {
+		t.Fatalf("classifier-unavailable MUST fail closed (no egress), got %d calls", up.calls)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "起動") { // distinct "starting up" wording
+		t.Errorf("expected the classifier-warming message, got: %s", body)
+	}
+}
+
 func TestStreamBlockReturnsSSE(t *testing.T) {
 	up := newMockUpstream()
 	defer up.srv.Close()
@@ -168,5 +278,345 @@ func TestStreamBlockReturnsSSE(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "event: message_stop") {
 		t.Errorf("missing SSE terminal event: %s", rec.Body.String())
+	}
+}
+
+func TestCaptureOnAllowRawOn(t *testing.T) {
+	up := newMockUpstream()
+	defer up.srv.Close()
+	h, st := newCaptureHandler(t, up.srv.URL, true)
+
+	prompt := "please refactor my function"
+	do(t, h, "/v1/messages", `{"model":"claude","messages":[{"role":"user","content":"`+prompt+`"}]}`)
+
+	e := onlyEvent(t, st)
+	if e.Decision != "ALLOW" {
+		t.Fatalf("decision = %s", e.Decision)
+	}
+	if e.PromptText == nil || *e.PromptText != prompt {
+		t.Fatalf("prompt not captured: %v", e.PromptText)
+	}
+	if e.Path != "/v1/messages" {
+		t.Fatalf("path = %q", e.Path)
+	}
+}
+
+func TestCaptureOnBlockRawOn(t *testing.T) {
+	up := newMockUpstream()
+	defer up.srv.Close()
+	h, st := newCaptureHandler(t, up.srv.URL, true)
+
+	secret := "AKIAIOSFODNN7EXAMPLE"
+	do(t, h, "/v1/messages", `{"model":"claude","messages":[{"role":"user","content":"here is `+secret+`"}]}`)
+
+	e := onlyEvent(t, st)
+	if e.Decision != "BLOCK" || e.Source != "rule" {
+		t.Fatalf("decision/source = %s/%s", e.Decision, e.Source)
+	}
+	if e.PromptText == nil || !strings.Contains(*e.PromptText, secret) {
+		t.Fatalf("blocked prompt not captured: %v", e.PromptText)
+	}
+	// The matched snippet is the exact offending span for highlighting.
+	if e.MatchedSnippet == nil || *e.MatchedSnippet != secret {
+		t.Fatalf("matched snippet = %v, want exactly %q", e.MatchedSnippet, secret)
+	}
+	// The safe reason must name the rule but never echo the secret value.
+	if strings.Contains(e.Reason, secret) {
+		t.Errorf("reason leaked the secret value: %q", e.Reason)
+	}
+	if e.UpstreamCalled {
+		t.Fatal("block must not mark upstream called")
+	}
+}
+
+func TestCaptureSnippetOffStoresNoSnippet(t *testing.T) {
+	up := newMockUpstream()
+	defer up.srv.Close()
+	h, st := newCaptureHandler(t, up.srv.URL, false)
+
+	do(t, h, "/v1/messages", `{"model":"claude","messages":[{"role":"user","content":"key AKIAIOSFODNN7EXAMPLE"}]}`)
+
+	e := onlyEvent(t, st)
+	if e.Decision != "BLOCK" {
+		t.Fatalf("decision = %s", e.Decision)
+	}
+	if e.MatchedSnippet != nil {
+		t.Fatalf("raw-off must not store the matched snippet: %v", *e.MatchedSnippet)
+	}
+}
+
+func TestCaptureOffStoresNoPrompt(t *testing.T) {
+	up := newMockUpstream()
+	defer up.srv.Close()
+
+	// ALLOW with raw off.
+	hA, stA := newCaptureHandler(t, up.srv.URL, false)
+	do(t, hA, "/v1/messages", `{"model":"claude","messages":[{"role":"user","content":"please refactor"}]}`)
+	if e := onlyEvent(t, stA); e.PromptText != nil {
+		t.Fatalf("ALLOW raw-off stored prompt: %v", *e.PromptText)
+	}
+
+	// BLOCK with raw off.
+	hB, stB := newCaptureHandler(t, up.srv.URL, false)
+	do(t, hB, "/v1/messages", `{"model":"claude","messages":[{"role":"user","content":"AKIAIOSFODNN7EXAMPLE"}]}`)
+	if e := onlyEvent(t, stB); e.PromptText != nil {
+		t.Fatalf("BLOCK raw-off stored prompt: %v", *e.PromptText)
+	}
+}
+
+func TestCaptureLiveTurnOnly(t *testing.T) {
+	up := newMockUpstream()
+	defer up.srv.Close()
+	h, st := newCaptureHandler(t, up.srv.URL, true)
+
+	body := `{"model":"claude","messages":[
+		{"role":"user","content":"first question about apples"},
+		{"role":"assistant","content":"sure"},
+		{"role":"user","content":"second question about bananas"}
+	]}`
+	do(t, h, "/v1/messages", body)
+
+	e := onlyEvent(t, st)
+	if e.PromptText == nil || *e.PromptText != "second question about bananas" {
+		t.Fatalf("live turn not captured exactly: %v", e.PromptText)
+	}
+	if strings.Contains(*e.PromptText, "apples") {
+		t.Fatal("captured prompt leaked earlier history turns")
+	}
+}
+
+func TestCaptureUnparseableStoresNoPrompt(t *testing.T) {
+	up := newMockUpstream()
+	defer up.srv.Close()
+	h, st := newCaptureHandler(t, up.srv.URL, true)
+
+	do(t, h, "/v1/messages", `{not valid json`)
+
+	e := onlyEvent(t, st)
+	if e.Decision != "BLOCK" || e.Source != "proxy" {
+		t.Fatalf("unparseable decision/source = %s/%s", e.Decision, e.Source)
+	}
+	if e.PromptText != nil {
+		t.Fatalf("unparseable request must not store a prompt: %v", *e.PromptText)
+	}
+}
+
+func TestCaptureTruncatesLargePrompt(t *testing.T) {
+	up := newMockUpstream()
+	defer up.srv.Close()
+	h, st := newCaptureHandler(t, up.srv.URL, true)
+
+	big := strings.Repeat("a", 20000) // > maxPromptBytes (16 KiB)
+	do(t, h, "/v1/messages", `{"model":"claude","messages":[{"role":"user","content":"`+big+`"}]}`)
+
+	e := onlyEvent(t, st)
+	if e.PromptText == nil {
+		t.Fatal("large prompt not captured")
+	}
+	if len(*e.PromptText) >= len(big) {
+		t.Fatalf("prompt not truncated: len=%d", len(*e.PromptText))
+	}
+	if !strings.HasSuffix(*e.PromptText, "…(truncated)") {
+		t.Fatalf("missing truncation marker: ...%q", (*e.PromptText)[len(*e.PromptText)-20:])
+	}
+}
+
+// --- explicit user bypass marker ---------------------------------------------
+
+// A would-be-blocked turn carrying the marker is forwarded, and the marker is
+// stripped from the body so Claude never sees it.
+func TestBypassMarkerForwardsAndStrips(t *testing.T) {
+	up := newMockUpstream()
+	defer up.srv.Close()
+	h := newBypassHandler(up.srv.URL)
+
+	rec := do(t, h, "/v1/messages",
+		`{"model":"claude","messages":[{"role":"user","content":"explain my password rotation `+bypassMarker+`"}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if up.calls != 1 {
+		t.Fatalf("bypass should forward, upstream calls = %d", up.calls)
+	}
+	if up.sawSecret(bypassMarker) {
+		t.Error("override marker leaked to upstream (not stripped)")
+	}
+}
+
+// Per the user's choice, the marker is a FULL bypass: even a deterministic rule
+// hit (AWS key) is forwarded. This documents the accepted relaxation.
+func TestBypassMarkerOverridesRule(t *testing.T) {
+	up := newMockUpstream()
+	defer up.srv.Close()
+	h := newBypassHandler(up.srv.URL)
+
+	secret := "AKIAIOSFODNN7EXAMPLE"
+	rec := do(t, h, "/v1/messages",
+		`{"model":"claude","messages":[{"role":"user","content":"send this key `+secret+` `+bypassMarker+`"}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if up.calls != 1 {
+		t.Fatalf("full bypass should forward despite rule hit, calls = %d", up.calls)
+	}
+	if !up.sawSecret(secret) {
+		t.Error("expected the marked turn to egress (full bypass), secret not forwarded")
+	}
+	if up.sawSecret(bypassMarker) {
+		t.Error("override marker leaked to upstream (not stripped)")
+	}
+}
+
+// A marker that appears only inside tool_result/file content must NOT bypass:
+// the live turn is still blocked and the secret never egresses.
+func TestBypassMarkerInToolResultDoesNotBypass(t *testing.T) {
+	up := newMockUpstream()
+	defer up.srv.Close()
+	h := newBypassHandler(up.srv.URL)
+
+	secret := "AKIAIOSFODNN7EXAMPLE"
+	body := `{"model":"claude","messages":[{"role":"user","content":[` +
+		`{"type":"text","text":"please review the output"},` +
+		`{"type":"tool_result","tool_use_id":"tu_1","content":"` + secret + ` ` + bypassMarker + `"}]}]}`
+	rec := do(t, h, "/v1/messages", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if up.calls != 0 {
+		t.Fatalf("marker in tool_result must not bypass; upstream calls = %d", up.calls)
+	}
+	if up.sawSecret(secret) {
+		t.Fatal("secret reached upstream despite marker only in tool_result")
+	}
+	if !strings.Contains(rec.Body.String(), anthropic.BlockNoticeSentinel) {
+		t.Errorf("expected a block response, got: %s", rec.Body.String())
+	}
+}
+
+// The marker bypasses the live turn but history is still sanitized: a secret
+// blocked on an earlier turn must not leak when a later turn is bypassed.
+func TestBypassStillSanitizesHistory(t *testing.T) {
+	up := newMockUpstream()
+	defer up.srv.Close()
+	h := newBypassHandler(up.srv.URL)
+
+	secret := "AKIAIOSFODNN7EXAMPLE"
+	body := `{"model":"claude","messages":[
+		{"role":"user","content":"find the bug"},
+		{"role":"assistant","content":[{"type":"text","text":"reading env"},{"type":"tool_use","id":"tu_1","name":"Read","input":{}}]},
+		{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_1","content":"` + secret + ` found in .env"}]},
+		{"role":"assistant","content":"blocked <!-- LOCAL_DLP_NOTE -->"},
+		{"role":"user","content":"now explain in general terms ` + bypassMarker + `"}
+	]}`
+	rec := do(t, h, "/v1/messages", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if up.calls != 1 {
+		t.Fatalf("bypassed live turn should forward, upstream calls = %d", up.calls)
+	}
+	if up.sawSecret(secret) {
+		t.Fatal("history secret leaked to upstream under bypass")
+	}
+	if up.sawSecret("tu_1") {
+		t.Error("orphaned tool_use id forwarded (history pairing not cleaned)")
+	}
+	if up.sawSecret(bypassMarker) {
+		t.Error("override marker leaked to upstream (not stripped)")
+	}
+}
+
+// count_tokens is a second egress channel: a marked count_tokens request must
+// forward upstream for a real count, not return the local block estimate.
+func TestBypassCountTokensForwards(t *testing.T) {
+	up := newMockUpstream()
+	defer up.srv.Close()
+	h := newBypassHandler(up.srv.URL)
+
+	rec := do(t, h, "/v1/messages/count_tokens",
+		`{"model":"claude","messages":[{"role":"user","content":"DB_PASSWORD=hunter2 `+bypassMarker+`"}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if up.calls != 1 {
+		t.Fatalf("marked count_tokens should forward upstream, calls = %d", up.calls)
+	}
+	if up.sawSecret(bypassMarker) {
+		t.Error("override marker leaked to upstream (not stripped)")
+	}
+}
+
+// A marker in a text block (array content) is detected and stripped via the
+// block-array path.
+func TestBypassMarkerInTextBlockForwardsAndStrips(t *testing.T) {
+	up := newMockUpstream()
+	defer up.srv.Close()
+	h := newBypassHandler(up.srv.URL)
+
+	rec := do(t, h, "/v1/messages",
+		`{"model":"claude","messages":[{"role":"user","content":[{"type":"text","text":"my password notes `+bypassMarker+`"}]}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if up.calls != 1 {
+		t.Fatalf("bypass should forward, upstream calls = %d", up.calls)
+	}
+	if up.sawSecret(bypassMarker) {
+		t.Error("override marker leaked to upstream (not stripped)")
+	}
+}
+
+// A message that is only the marker is forwarded as-is (stripping would leave
+// empty content, which the API rejects).
+func TestBypassMarkerOnlyMessageForwards(t *testing.T) {
+	up := newMockUpstream()
+	defer up.srv.Close()
+	h := newBypassHandler(up.srv.URL)
+
+	rec := do(t, h, "/v1/messages",
+		`{"model":"claude","messages":[{"role":"user","content":"`+bypassMarker+`"}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if up.calls != 1 {
+		t.Fatalf("marker-only message should still forward, upstream calls = %d", up.calls)
+	}
+}
+
+// With bypass disabled (the default handler), the marker is inert and the turn
+// still blocks.
+func TestBypassDisabledStillBlocks(t *testing.T) {
+	up := newMockUpstream()
+	defer up.srv.Close()
+	h := newTestHandler(up.srv.URL) // bypass disabled
+
+	rec := do(t, h, "/v1/messages",
+		`{"model":"claude","messages":[{"role":"user","content":"leak my password `+bypassMarker+`"}]}`)
+	if up.calls != 0 {
+		t.Fatalf("bypass disabled: marker must not allow egress, calls = %d", up.calls)
+	}
+	if !strings.Contains(rec.Body.String(), anthropic.BlockNoticeSentinel) {
+		t.Errorf("expected a block response, got: %s", rec.Body.String())
+	}
+}
+
+// A bypass is audited with a distinct BYPASS decision and upstream_called=true.
+func TestBypassAuditDecision(t *testing.T) {
+	up := newMockUpstream()
+	defer up.srv.Close()
+	h, st := newBypassCaptureHandler(t, up.srv.URL)
+
+	do(t, h, "/v1/messages",
+		`{"model":"claude","messages":[{"role":"user","content":"leak my password `+bypassMarker+`"}]}`)
+
+	e := onlyEvent(t, st)
+	if e.Decision != "BYPASS" {
+		t.Errorf("audit decision = %q, want BYPASS", e.Decision)
+	}
+	if !e.UpstreamCalled {
+		t.Error("BYPASS audit should record upstream_called=true")
+	}
+	if e.Reason != "user_bypass_marker" {
+		t.Errorf("audit reason = %q, want user_bypass_marker", e.Reason)
 	}
 }

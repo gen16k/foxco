@@ -1,27 +1,29 @@
-# Local LFM DLP Proxy — PoC one-command launcher.
+# PromptGate — sidecar + proxy + admin UI launcher.
 #
-# Starts the local LFM sidecar (llama.cpp `llama-server`) AND the proxy in one
-# command. Target hardware is the AMD Ryzen 5 350 APU; no NVIDIA/CUDA required.
+# Starts the local LFM sidecar (llama.cpp `llama-server`), the proxy, AND the admin
+# web UI (Next.js, localhost only). Target hardware is the AMD Ryzen 5 350 APU; no
+# NVIDIA/CUDA required.
 #
-#   .\start.ps1                       # iGPU (Vulkan) sidecar + proxy   (default)
-#   .\start.ps1 -Backend cpu          # CPU sidecar + proxy             (fallback)
+#   .\start.ps1                       # iGPU (Vulkan) sidecar + proxy + admin UI
+#   .\start.ps1 -Backend cpu          # CPU sidecar + proxy + admin UI  (fallback)
 #   .\start.ps1 -Classifier keyword   # no model: deterministic keyword fallback
-#   .\start.ps1 -NoSidecar            # proxy only (sidecar already running)
+#   .\start.ps1 -NoSidecar            # proxy + admin UI only (sidecar elsewhere)
+#   .\start.ps1 -NoWeb                # proxy (and sidecar) only, no admin UI
+#   .\start.ps1 -SidecarOnly          # sidecar only, FOREGROUND (service RunOnDemand task)
+#   .\start.ps1 -WebOnly              # admin UI only, FOREGROUND (service RunOnDemand task)
 #
-# DLP model — the akiFQC LFM2 *-Conf-Extract Japanese family (11-category
-# confidential-entity extractor; config profile `jp_confidential_extraction`).
-# The default 1.2B has an upstream GGUF repo, so -Model is an -hf ref that
-# llama-server auto-downloads on first run. The whole family shares one I/O
-# contract, so changing size is just a different -Model — the config profile
-# never changes:
+# The admin UI starts on http://127.0.0.1:3939 (loopback only). It reads the proxy's
+# admin API; this script passes the API address + admin.auth_token from the chosen
+# config to the UI automatically so they match. Ctrl+C stops everything.
 #
-#   .\start.ps1                                                              # 1.2B GGUF via -hf (default)
-#   .\start.ps1 -Model akiFQC/LFM2.5-1.2B-JP-202606-Conf-Extract-GGUF:Q8_0  # higher-fidelity quant
-#
-# For a checkpoint with no GGUF repo yet (e.g. the 350M), convert it locally once
-# (scripts\convert-model-gguf.ps1) and pass the resulting file:
-#   .\scripts\convert-model-gguf.ps1 -Repo akiFQC/LFM2-350M-Conf-Extract-Japanese
-#   .\start.ps1 -Model .\models\LFM2-350M-Conf-Extract-Japanese-Q4_K_M.gguf
+# SERVICE MODEL: in transparent mode the proxy runs as a Windows service (see
+# install.ps1). The GPU-bound sidecar and the per-user node admin UI must run in the
+# *user session* (a Session-0 service cannot reach the iGPU). The install-registered
+# RunOnDemand tasks run this script with -SidecarOnly / -WebOnly; the service's
+# supervisor triggers them on start and terminates them on stop. Both run in the
+# FOREGROUND so the task's process tree owns the child — ending the task (or the
+# supervisor's port-scoped taskkill /T) leaves nothing orphaned. Use the plain form
+# (no -SidecarOnly/-WebOnly) for console/dev runs (sidecar + proxy + UI together).
 #
 # GPU acceleration uses the **Vulkan** build of llama.cpp on the integrated
 # Radeon (RDNA 3.5). ROCm does not support AMD iGPUs on Windows, so Vulkan is the
@@ -40,24 +42,21 @@ param(
     [string]$Classifier = "",                  # "" (config default / llama) or "keyword"
     [ValidateSet("vulkan", "cpu")]
     [string]$Backend = "vulkan",               # iGPU (Vulkan) by default; "cpu" to fall back
-    [string]$Model = "akiFQC/LFM2.5-1.2B-JP-202606-Conf-Extract-GGUF:Q4_K_M",  # -hf ref (auto-download) OR local .gguf path
+    [string]$Model = "akiFQC/LFM2.5-1.2B-JP-202606-Conf-Extract-GGUF:Q4_K_M",  # -hf ref (auto-download) or local .gguf path
     [string]$LlamaServer = "llama-server",     # path to llama-server(.exe); default: on PATH
     [string]$LlamaHost = "127.0.0.1",
     [int]$LlamaPort = 8791,                     # must match inference.endpoint in config
     [int]$HealthTimeoutSec = 600,              # first run downloads the GGUF + compiles Vulkan shaders
-    [switch]$NoSidecar
+    [switch]$NoSidecar,
+    [switch]$SidecarOnly,                      # FOREGROUND sidecar only; no proxy/UI (service RunOnDemand task)
+    [switch]$WebOnly,                          # FOREGROUND admin UI only; no proxy/sidecar (service RunOnDemand task)
+    [switch]$NoWeb                             # skip launching the admin web UI
 )
 
 $ErrorActionPreference = "Stop"
 
-# Build the proxy if the binary is missing.
-if (-not (Test-Path ".\proxy.exe")) {
-    Write-Host "Building proxy.exe..."
-    go build -o proxy.exe .\cmd\proxy
-}
-
-# The keyword classifier needs no model, so never start a sidecar for it.
-$useSidecar = (-not $NoSidecar) -and ($Classifier -ne "keyword")
+if ($SidecarOnly -and $NoSidecar) { throw "-SidecarOnly and -NoSidecar are mutually exclusive." }
+if ($SidecarOnly -and $WebOnly)   { throw "-SidecarOnly and -WebOnly are mutually exclusive." }
 
 $healthUrl = "http://{0}:{1}/health" -f $LlamaHost, $LlamaPort
 
@@ -70,30 +69,77 @@ function Test-LlamaHealth {
     }
 }
 
+# Parse the proxy admin API address + token from the chosen config and export them
+# so the Next.js admin UI talks to this proxy without extra setup. Shared by the
+# console web start and the -WebOnly task branch.
+function Set-AdminEnvFromConfig([string]$cfgPath) {
+    $cfgText = if (Test-Path $cfgPath) { Get-Content -Raw $cfgPath } else { "" }
+    $listen = if ($cfgText -match '(?m)^\s*listen_addr:\s*"?([^"\r\n#]+?)"?\s*(#.*)?$') { $Matches[1].Trim() } else { "127.0.0.1:8787" }
+    $adminToken = if ($cfgText -match '(?m)^\s*auth_token:\s*"?([^"\r\n#]*?)"?\s*(#.*)?$') { $Matches[1].Trim() } else { "" }
+    $env:PROXY_ADMIN_BASE_URL = "http://$listen"
+    $env:PROXY_ADMIN_TOKEN = $adminToken
+}
+
+# Build the llama-server argument list (vulkan -> offload all layers to the iGPU;
+# cpu -> keep everything on CPU). Accepts a HuggingFace ref (-hf, auto-download) or
+# a local GGUF path (-m).
+function Get-LlamaArgs {
+    $ngl = if ($Backend -eq "vulkan") { 99 } else { 0 }
+    $modelArg = if (Test-Path $Model) { @("-m", $Model) } else { @("-hf", $Model) }
+    return $modelArg + @("--host", $LlamaHost, "--port", "$LlamaPort", "--jinja", "-ngl", "$ngl")
+}
+
+# ---- Service RunOnDemand task: FOREGROUND sidecar only -----------------------
+# Exec llama-server in the foreground so this powershell host is its parent. The
+# service supervisor stops it by ending the task / port-scoped taskkill /T, which
+# kills this whole tree — nothing is orphaned. No health gate needed: the proxy
+# does its own health check and fail-closes until the sidecar is up.
+if ($SidecarOnly) {
+    if (Test-LlamaHealth) {
+        Write-Host "LFM sidecar already healthy at $healthUrl — holding the task while it lives."
+        while (Test-LlamaHealth) { Start-Sleep -Seconds 5 }
+        return
+    }
+    $llamaArgs = Get-LlamaArgs
+    Write-Host "Starting LFM sidecar ($Backend) on ${LlamaHost}:${LlamaPort} (foreground; task-managed) ..."
+    Write-Host "  $LlamaServer $($llamaArgs -join ' ')"
+    & $LlamaServer @llamaArgs
+    return
+}
+
+# ---- Service RunOnDemand task: FOREGROUND admin UI only ----------------------
+# Exec the Next.js server in the foreground (same orphan-free rationale as above).
+if ($WebOnly) {
+    $webDir = Join-Path $PSScriptRoot "web"
+    if (-not (Test-Path (Join-Path $webDir "node_modules"))) {
+        Write-Host "Installing admin UI dependencies (first run; this can take a minute)..."
+        Push-Location $webDir
+        try { & npm install } finally { Pop-Location }
+    }
+    Set-AdminEnvFromConfig $Config
+    Write-Host "Starting admin UI (foreground; task-managed) -> http://127.0.0.1:3939 ..."
+    Push-Location $webDir
+    try { & npm.cmd run dev } finally { Pop-Location }
+    return
+}
+
+# ---- Console / dev run: sidecar + proxy + admin UI together ------------------
+
+# Build the proxy if the binary is missing.
+if (-not (Test-Path ".\proxy.exe")) {
+    Write-Host "Building proxy.exe..."
+    go build -o proxy.exe .\cmd\proxy
+}
+
+# The keyword classifier needs no model, so never start a sidecar for it.
+$useSidecar = (-not $NoSidecar) -and ($Classifier -ne "keyword")
+
 $sidecar = $null
 if ($useSidecar) {
     if (Test-LlamaHealth) {
         Write-Host "LFM sidecar already healthy at $healthUrl — reusing it."
     } else {
-        # vulkan -> offload all layers to the iGPU; cpu -> keep everything on CPU.
-        $ngl = if ($Backend -eq "vulkan") { 99 } else { 0 }
-        # Accept either a local GGUF path (-m) or a HuggingFace ref (auto-download
-        # via -hf). A *.gguf path that does not exist is almost always a missing
-        # local conversion, so fail with a pointer to the convert script rather than
-        # silently mis-handing the path to -hf.
-        if (Test-Path $Model) {
-            $modelArg = @("-m", $Model)
-        } elseif ($Model -match '\.gguf$') {
-            throw ("GGUF not found: $Model`n" +
-                "This Conf-Extract checkpoint ships as safetensors only — convert it once:`n" +
-                "  .\scripts\convert-model-gguf.ps1`n" +
-                "then re-run, or pass -Model <existing.gguf> / -Model <repo>-GGUF:<quant> (-hf).")
-        } else {
-            $modelArg = @("-hf", $Model)
-        }
-        $llamaArgs = $modelArg + @(
-            "--host", $LlamaHost, "--port", "$LlamaPort", "--jinja", "-ngl", "$ngl"
-        )
+        $llamaArgs = Get-LlamaArgs
         Write-Host "Starting LFM sidecar ($Backend) on ${LlamaHost}:${LlamaPort} ..."
         Write-Host "  $LlamaServer $($llamaArgs -join ' ')"
         try {
@@ -121,14 +167,40 @@ if ($useSidecar) {
     }
 }
 
+# Start the admin web UI (Next.js) on localhost, unless suppressed. It is bound to
+# 127.0.0.1 (see web/package.json) so it is reachable only from this machine.
+$web = $null
+if (-not $NoWeb) {
+    $webDir = Join-Path $PSScriptRoot "web"
+    try {
+        if (-not (Test-Path (Join-Path $webDir "node_modules"))) {
+            Write-Host "Installing admin UI dependencies (first run; this can take a minute)..."
+            Push-Location $webDir
+            try { & npm install } finally { Pop-Location }
+        }
+        Set-AdminEnvFromConfig $Config
+        Write-Host "Starting admin UI (localhost only) -> http://127.0.0.1:3939 ..."
+        $web = Start-Process -FilePath "npm.cmd" -ArgumentList @("run", "dev") -WorkingDirectory $webDir -PassThru
+    } catch {
+        Write-Warning "Could not start the admin UI ($($_.Exception.Message)). Continuing with the proxy only; run it manually with:  cd web; npm install; npm run dev"
+        $web = $null
+    }
+}
+
 $proxyArgs = @("-config", $Config)
 if ($Classifier -ne "") { $proxyArgs += @("-classifier", $Classifier) }
 
-Write-Host "Starting Local LFM DLP Proxy on 127.0.0.1:8787 ..."
+Write-Host "Starting PromptGate proxy on 127.0.0.1:8787 ..."
+if ($web) { Write-Host "Admin UI: http://127.0.0.1:3939  (Ctrl+C here stops the UI and proxy)" }
 try {
     & .\proxy.exe @proxyArgs
 }
 finally {
+    # Stop the admin UI we started (kill the npm -> node process tree).
+    if ($web -and -not $web.HasExited) {
+        Write-Host "Stopping admin UI (pid $($web.Id)) ..."
+        taskkill /PID $web.Id /T /F 2>$null | Out-Null
+    }
     # Only stop a sidecar this script started; leave a pre-existing one running.
     if ($sidecar -and -not $sidecar.HasExited) {
         Write-Host "Stopping LFM sidecar (pid $($sidecar.Id)) ..."

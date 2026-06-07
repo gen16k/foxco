@@ -36,8 +36,8 @@ func (d *Detector) Classify(ctx context.Context, seg Segment) Result {
 	}
 
 	if d.ruleEnabled && d.rules != nil {
-		if name, hit := d.rules.Match(seg.Text); hit {
-			r := Result{Decision: Block, Reason: "secret detected (" + name + ")", Source: "rule"}
+		if name, span, hit := d.rules.MatchSpan(seg.Text); hit {
+			r := Result{Decision: Block, Reason: "secret detected (" + name + ")", Source: "rule", Match: span}
 			d.cache.Put(key, r)
 			return r
 		}
@@ -59,6 +59,9 @@ func (d *Detector) Classify(ctx context.Context, seg Segment) Result {
 	if out.NG {
 		r.Decision = Block
 		r.Reason = out.ShortReason
+		// The LFM gives a verdict, not a span, so the whole flagged segment is
+		// the best available "offending text" for highlighting.
+		r.Match = seg.Text
 	}
 	d.cache.Put(key, r)
 	return r
@@ -69,6 +72,7 @@ type Evaluation struct {
 	Block       bool      // the live (latest) turn must be blocked
 	BlockReason string    // safe-to-surface reason for the block
 	BlockSource string    // "rule" | "lfm" | "classifier_unavailable"
+	BlockMatch  string    // offending text of the live block (raw; opt-in storage only)
 	HistoryNG   []Segment // sensitive history segments to sanitize before forwarding
 }
 
@@ -87,7 +91,7 @@ func (d *Detector) Evaluate(ctx context.Context, segs []Segment, lastMsgIndex in
 
 	for _, s := range live {
 		if r := d.Classify(ctx, s); r.Decision == Block {
-			return Evaluation{Block: true, BlockReason: r.Reason, BlockSource: r.Source}
+			return Evaluation{Block: true, BlockReason: r.Reason, BlockSource: r.Source, BlockMatch: r.Match}
 		}
 	}
 
@@ -98,4 +102,22 @@ func (d *Detector) Evaluate(ctx context.Context, segs []Segment, lastMsgIndex in
 		}
 	}
 	return Evaluation{HistoryNG: ng}
+}
+
+// EvaluateHistoryOnly classifies only the history segments (those not belonging
+// to the last message) and returns the sensitive ones to sanitize. The live
+// turn is deliberately not classified: it is used by the explicit user-bypass
+// path, where the latest turn is forwarded without blocking but previously
+// sensitive history is still removed.
+func (d *Detector) EvaluateHistoryOnly(ctx context.Context, segs []Segment, lastMsgIndex int) []Segment {
+	var ng []Segment
+	for _, s := range segs {
+		if s.MsgIndex == lastMsgIndex {
+			continue
+		}
+		if r := d.Classify(ctx, s); r.Decision == Block {
+			ng = append(ng, s)
+		}
+	}
+	return ng
 }

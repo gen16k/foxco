@@ -1,12 +1,50 @@
-# Local LFM DLP Proxy — example configuration.
-# Copy to %LOCALAPPDATA%\LocalLfmDlpProxy\config.yaml and edit as needed.
+# PromptGate — example configuration.
+# Copy to %ProgramData%\PromptGate\config.yaml and edit as needed.
+# (The Windows service runs as LocalSystem, so machine-wide %ProgramData% is used
+#  rather than the per-user %LOCALAPPDATA%.)
+
+# How clients reach the proxy:
+#   transparent — hosts-file redirect of intercept.hosts + HTTPS interception on
+#                 intercept.https_listen_addr (default; no ANTHROPIC_BASE_URL needed).
+#   proxy       — legacy env-var mode: set ANTHROPIC_BASE_URL=http://127.0.0.1:8787.
+#   both        — run both listeners at once.
+mode: "transparent"
 
 server:
-  # Bind localhost only. Do not expose to the LAN.
+  # Plain-HTTP listener for legacy "proxy" mode. Bind localhost only.
   listen_addr: "127.0.0.1:8787"
+
+intercept:
+  # Hostnames redirected to the proxy via the hosts file while the service runs.
+  # Keep this minimal — only api.anthropic.com carries prompt payloads.
+  hosts:
+    - "api.anthropic.com"
+  # TLS listener for transparent mode. The hosts file maps the names above to
+  # 127.0.0.1, and clients connect on :443, so this must be 127.0.0.1:443.
+  https_listen_addr: "127.0.0.1:443"
+  # Add/remove the hosts-file entry on service start/stop. The service runs as
+  # LocalSystem, which can write the hosts file. (For local dev without admin,
+  # set false and manage redirection yourself.)
+  manage_hosts_file: true
+
+tls:
+  # Proxy-issued root CA (generated on first run, installed into the Windows
+  # trust store by install.ps1). Leaf certs for intercept.hosts are minted on
+  # the fly and signed by this CA.
+  ca_cert_path: "%ProgramData%\\PromptGate\\ca\\ca.crt"
+  ca_key_path: "%ProgramData%\\PromptGate\\ca\\ca.key"
+  # X.509 Name Constraints: the CA is only valid for these DNS domains, so a
+  # leaked CA key cannot impersonate unrelated sites. Adding a non-anthropic
+  # intercept host means reissuing + reinstalling the CA with it listed here.
+  name_constraints:
+    - "anthropic.com"
 
 upstream:
   base_url: "https://api.anthropic.com"
+  # External DNS (host:port) used to resolve the REAL upstream, bypassing the
+  # hosts file the proxy installs (otherwise api.anthropic.com would loop back to
+  # the proxy itself). TLS SNI stays api.anthropic.com so the real cert validates.
+  resolver_dns: "1.1.1.1:53"
   timeout_ms: 60000
 
 dlp:
@@ -26,6 +64,23 @@ dlp:
     # Set to false for an LFM-only pipeline (the model becomes the sole
     # classifier); true keeps both layers (recommended in production).
     enabled: true
+  bypass:
+    # Explicit user override for obvious false positives. When enabled and the
+    # latest user message contains `marker`, that turn is forwarded WITHOUT DLP
+    # blocking (both the classifier AND the deterministic rule guardrail are
+    # skipped for that turn) and audited as a distinct `BYPASS` decision (shown
+    # as its own state in the admin UI). Scope is intentionally narrow:
+    #   - Only the live (latest) user-authored text is scanned for the marker —
+    #     never tool_result/file content, so a read file containing the marker
+    #     cannot silently disable DLP.
+    #   - Prior-turn history is still sanitized; previously-blocked secrets are
+    #     not re-sent.
+    #   - The marker is stripped before forwarding so Claude never sees it.
+    # This is advisory only (honest-mistake threat model): a user can already
+    # bypass entirely by unsetting ANTHROPIC_BASE_URL / stopping the proxy. Set
+    # enabled: false to remove the override; an empty marker also disables it.
+    enabled: true
+    marker: "#dlp-allow"
 
 inference:
   # MVP backend: a llama.cpp server (llama-server) exposing the OpenAI-compatible
@@ -35,29 +90,26 @@ inference:
   # to "keyword" to run without a model (dev/CI/demo fallback).
   type: "llama_cpp_http"
   endpoint: "http://127.0.0.1:8791"
-  # Label only (audit log + request body). The sidecar serves whatever GGUF it was
-  # launched with (start.ps1 -Model), so this is just the human-readable model id;
-  # keep it in sync with the loaded checkpoint.
+  # Label only (audit/request body). The sidecar serves whatever GGUF start.ps1
+  # loaded (-Model); keep this in sync with the loaded checkpoint.
   model: "LFM2.5-1.2B-JP-202606-Conf-Extract"
   warmup_on_start: true
   health_timeout_ms: 500
   # LFM I/O contract (prompt + schema + output parsing). Must match the loaded
   # checkpoint's training format. Built-ins:
   #   jp_confidential_extraction (default) — for the akiFQC LFM2 *-Conf-Extract
-  #     Japanese family (e.g. akiFQC/LFM2.5-1.2B-JP-202606-Conf-Extract, or the
-  #     350M akiFQC/LFM2-350M-Conf-Extract-Japanese): an 11-category entity
-  #     EXTRACTION model (plain-text input, JSON entity-list output); any non-empty
-  #     category => BLOCK. The whole family shares this contract, so swapping size
-  #     only changes start.ps1 -Model (and this `model` label) — not the profile.
-  #   reason_decision — {"reason","decision":ALLOW|BLOCK} generic classifier
-  #     (for a general instruct model such as LFM2.5-1.2B-Instruct).
+  #     Japanese family (default checkpoint akiFQC/LFM2.5-1.2B-JP-202606-Conf-Extract,
+  #     start.ps1 -hf-downloads its GGUF): an 11-category entity-EXTRACTION model
+  #     (plain-text input, JSON entity-list output); any non-empty category => BLOCK.
+  #     The whole family shares this contract, so swapping size only changes
+  #     start.ps1 -Model (and this `model` label) — not the profile.
+  #   reason_decision — {"reason","decision":ALLOW|BLOCK} generic classifier.
   #   ng_boolean      — {"ng","short_reason"} boolean classifier.
   # Register more in internal/inference/profile.go.
   profile: "jp_confidential_extraction"
   # Optional: override just the profile's system prompt from a file. Use this to
-  # pin the deployed checkpoint's EXACT training prompt byte-for-byte if it ever
-  # drifts from the built-in (a small model's extraction accuracy is sensitive to
-  # full/half-width punctuation and newlines).
+  # pin the deployed checkpoint's EXACT training prompt if it drifts from the
+  # built-in (small models are sensitive to punctuation/newlines).
   # system_prompt_file: "C:\\path\\to\\system_prompt.txt"
 
 cache:
@@ -68,10 +120,47 @@ cache:
 
 storage:
   type: "sqlite"
-  path: "%LOCALAPPDATA%\\LocalLfmDlpProxy\\state\\dlp.db"
-  store_raw_text: false        # never persist raw content / secrets
+  path: "%ProgramData%\\PromptGate\\state\\dlp.db"
+  # store_raw_text: default false = metadata only (no raw content / secrets).
+  # When true, the audit DB ALSO persists the live user turn (the new prompt) for
+  # every request so the admin UI can show prompt history + detection contents.
+  # This DELIBERATELY relaxes the "never persist raw content" invariant and WILL
+  # store secrets. Keep it false in production; enable it only for a local demo,
+  # and pair it with admin.auth_token below. See docs/decisions.md.
+  store_raw_text: false
   retention_days: 30
 
 logging:
   level: "info"
   redact_sensitive_values: true
+  # When running as a Windows service there is no console; direct logs to a file.
+  # Leave empty to log to stdout (console / dev mode).
+  file: "%ProgramData%\\PromptGate\\logs\\proxy.log"
+
+service:
+  # Windows service name (used by install.ps1 / uninstall.ps1 / proxyctl.ps1).
+  name: "PromptGate"
+
+admin:
+  # Read-only observability API (/admin/stats, /admin/events, /admin/meta) for the
+  # local admin UI. Binds the same localhost address as the proxy; no LAN exposure.
+  enabled: true
+  # When set, every /admin/* request must send `Authorization: Bearer <token>`.
+  # Strongly recommended whenever store_raw_text is true. Empty = no token.
+  auth_token: ""
+
+# supervise: only the installed Windows service uses this — install.ps1 appends an
+# active block (enabled: true) to the deployed config. Leave it commented here so
+# console/dev runs (this example) keep it disabled: start.ps1 launches the sidecar
+# and admin UI inline, and a second trigger would contend for the ports.
+#
+# When enabled, the service starts the named user-session RunOnDemand tasks on
+# service start (the sidecar needs the interactive session for the iGPU) and stops
+# them on service stop, force-killing a lingering child by port.
+#
+# supervise:
+#   enabled: true
+#   sidecar_task: "PromptGate-Sidecar"
+#   web_task: "PromptGate-WebUI"
+#   web_port: 3939
+#   stop_timeout_ms: 8000

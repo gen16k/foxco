@@ -1,4 +1,4 @@
-# Local LFM DLP Proxy
+# PromptGate
 
 A local Data-Loss-Prevention proxy that sits between **Claude Code** and the
 Anthropic API. It inspects every outbound request, asks a local **LFM (Liquid
@@ -10,19 +10,24 @@ This is primarily a **showcase for on-device LFM classification**: the LFM is th
 primary NG/OK classifier, with a small deterministic rule guardrail as insurance.
 
 > **Threat model — read this first.** This is an *advisory* control for the
-> honest-mistake case (a developer accidentally pasting a secret). It runs as a
-> per-user localhost proxy selected via `ANTHROPIC_BASE_URL`, so it is **not** a
-> tamper-proof enforcement boundary: a user who unsets the env var or stops the
-> process bypasses it. Real enforcement requires a network egress chokepoint
-> (forward proxy / firewall) the user cannot disable. See `docs/spec-proxy.md`.
+> honest-mistake case (a developer accidentally pasting a secret). By default it
+> runs in **transparent mode**: a Windows service redirects `api.anthropic.com`
+> via the hosts file and terminates TLS with a locally-trusted CA, so no
+> `ANTHROPIC_BASE_URL` is needed and casual bypass is harder than the env-var
+> mode. It is still **not** a tamper-proof enforcement boundary — a user with
+> Administrator rights can stop the service, remove the hosts entry, or uninstall
+> the CA. Real enforcement requires a network egress chokepoint (forward proxy /
+> firewall) the user cannot disable. See `docs/spec-proxy.md` §5.
 
 ## How it works
 
 ```
-Claude Code --(ANTHROPIC_BASE_URL=http://127.0.0.1:8787)--> Proxy
+Claude Code --(transparent: hosts api.anthropic.com->127.0.0.1, TLS :443 via local CA)--> Proxy
+            --(or legacy: ANTHROPIC_BASE_URL=http://127.0.0.1:8787)-----------------------> Proxy
   parse  -> normalize -> segment -> [cache] -> rule guardrail -> LFM (NG/OK)
          -> BLOCK (assistant message / SSE, no egress)          (live turn NG)
          -> sanitize history (remove sensitive tool/turn units) -> forward upstream
+              (upstream resolved via external DNS so the redirect doesn't loop back)
 ```
 
 - **Model -> binary verdict.** The proxy reduces the LFM output to
@@ -112,7 +117,10 @@ locally once with `scripts\convert-model-gguf.ps1` (needs Python 3, git, and
 ### Launch
 
 `start.ps1` is a one-command launcher: it starts the sidecar, waits for it to become
-healthy, then starts the proxy.
+healthy, then starts the proxy **and the admin web UI** (`web/`, Next.js) on
+`http://127.0.0.1:3939` — loopback only. The launcher passes the admin API address
+and `admin.auth_token` from the chosen config to the UI automatically. Pass
+`-NoWeb` to skip the UI. Ctrl+C stops everything it started.
 
 ```powershell
 # Option A: real LFM on the integrated Radeon iGPU via Vulkan. start.ps1 -hf
@@ -134,25 +142,57 @@ If more than one Vulkan device shows up, pin the iGPU with
 `docs/spec-proxy.md` §8.5). To manage the sidecar yourself, start `llama-server`
 separately and run `.\start.ps1 -NoSidecar`.
 
-Then point Claude Code at the proxy:
+### Connect Claude Code
+
+**Transparent mode (default).** No `ANTHROPIC_BASE_URL` needed — a Windows service
+redirects `api.anthropic.com` to the proxy and terminates TLS with a locally-trusted
+CA. One-time setup, from an **elevated** PowerShell in this directory:
+
+```powershell
+.\install.ps1          # builds, installs the CA, registers the MANUAL-start service
+                       # + two user-session RunOnDemand tasks (sidecar + admin UI)
+```
+
+`install.ps1` registers the service as **manual start** and does **not** start it
+(so it won't disturb a running Claude session, and it never auto-starts at boot).
+The service owns the whole lifecycle: starting it triggers the user-session sidecar
+and admin UI; stopping it tears all three down. Start it deliberately while logged
+in (the sidecar needs your interactive session for the iGPU):
+
+```powershell
+.\proxyctl.ps1 start   # Start-Service PromptGate -> proxy + sidecar + admin UI
+.\proxyctl.ps1 status  # service / sidecar / web / redirect state
+.\proxyctl.ps1 stop    # stop the service -> tears down all three
+.\uninstall.ps1        # revert everything (elevated)
+```
+
+**Legacy proxy mode (fallback).** Set `mode: proxy` in the config and point Claude
+Code at the plain-HTTP listener:
 
 ```powershell
 $env:ANTHROPIC_BASE_URL = "http://127.0.0.1:8787"   # no /v1 suffix
 claude
 ```
 
+Open the admin UI at `http://127.0.0.1:3939` to see detection counts, contents, and
+prompt history. Prompt bodies are shown only when the proxy runs with
+`storage.store_raw_text: true` (off by default). See `web/README.md` for details.
+
 ## Layout
 
 | Path | Responsibility |
 |------|----------------|
-| `cmd/proxy` | entrypoint, config + classifier wiring, HTTP server |
-| `internal/proxy` | request flow handler (parse → evaluate → sanitize → forward) |
+| `cmd/proxy` | entrypoint, config + classifier wiring, dual listeners, Windows service |
+| `internal/proxy` | request flow handler (parse → evaluate → sanitize → forward) + passthrough |
 | `internal/anthropic` | Messages API types (round-trip safe), block response, SSE, forwarder |
 | `internal/dlp` | normalize, segment, rule guardrail, cache, LFM detector/policy |
 | `internal/inference` | llama.cpp client (LFM) + keyword fallback classifier + `PromptProfile` |
 | `internal/sanitizer` | structure-aware history unit removal + validation |
 | `internal/storage` | SQLite audit log (no raw text / secrets) |
 | `internal/config` | YAML config + safe defaults |
+| `internal/mitm` | Name-Constrained root CA + on-the-fly leaf certs (transparent TLS) |
+| `internal/upstreamdial` | hosts-bypassing transport so the upstream forward reaches the real API |
+| `internal/hostsfile` | crash-safe hosts-file redirect block (add on start / remove on stop) |
 
 Configuration: see `config/config.example.yaml`. Full design: `docs/spec-proxy.md`
 and the implementation plan it links to.

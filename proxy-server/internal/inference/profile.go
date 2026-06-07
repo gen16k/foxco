@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"local-lfm-dlp-proxy/internal/dlp"
+	"promptgate/internal/dlp"
 )
 
 // PromptProfile defines the full LFM I/O contract: the system instruction, the

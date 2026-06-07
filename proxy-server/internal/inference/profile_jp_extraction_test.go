@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"local-lfm-dlp-proxy/internal/dlp"
+	"promptgate/internal/dlp"
 )
 
 // allEmpty is the model's "nothing sensitive" output: every category present and
