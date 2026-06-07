@@ -85,11 +85,13 @@ function Require-Cmd {
 }
 
 function Exec {
-    param([string]$File, [string[]]$Args)
-    Write-Host ">> $File $($Args -join ' ')" -ForegroundColor DarkGray
-    & $File @Args
+    # NOTE: do not name this param $Args — it collides with PowerShell's automatic
+    # $Args variable and the splat silently becomes empty.
+    param([string]$File, [string[]]$CmdArgs)
+    Write-Host ">> $File $($CmdArgs -join ' ')" -ForegroundColor DarkGray
+    & $File @CmdArgs
     if ($LASTEXITCODE -ne 0) {
-        throw "Command failed (exit $LASTEXITCODE): $File $($Args -join ' ')"
+        throw "Command failed (exit $LASTEXITCODE): $File $($CmdArgs -join ' ')"
     }
 }
 
@@ -98,9 +100,10 @@ Require-Cmd $Python "Install Python 3 and ensure it is on PATH (or pass -Python)
 Require-Cmd "git" "Install Git (needed to fetch convert_hf_to_gguf.py)."
 Require-Cmd "llama-quantize" "Install a llama.cpp build (winget install ggml.llamacpp) so llama-quantize is on PATH."
 
-# huggingface-cli is the downloader; install it into the chosen Python if missing.
-if (-not (Get-Command "huggingface-cli" -ErrorAction SilentlyContinue)) {
-    Write-Host "huggingface-cli not found; installing huggingface_hub[cli] into $Python ..."
+# `hf` is the HuggingFace downloader (the old `huggingface-cli` is deprecated and
+# now refuses to run). Install huggingface_hub[cli] into the chosen Python if absent.
+if (-not (Get-Command "hf" -ErrorAction SilentlyContinue)) {
+    Write-Host "hf CLI not found; installing huggingface_hub[cli] into $Python ..."
     Exec $Python @("-m", "pip", "install", "-U", "huggingface_hub[cli]")
 }
 
@@ -125,7 +128,7 @@ if ((Test-Path $finalPath) -and -not $Force) {
 Write-Host "`n[1/3] Downloading $Repo -> $snapshotDir" -ForegroundColor Cyan
 $dlArgs = @("download", $Repo, "--local-dir", $snapshotDir, "--exclude", "checkpoint-*/*")
 if ($HfToken -ne "") { $dlArgs += @("--token", $HfToken) }
-Exec "huggingface-cli" $dlArgs
+Exec "hf" $dlArgs
 
 # --- 2. ensure llama.cpp convert script + deps, then convert to f16 GGUF ------
 Write-Host "`n[2/3] Converting to f16 GGUF" -ForegroundColor Cyan
@@ -135,9 +138,16 @@ if (-not (Test-Path $convertPy)) {
     Exec "git" @("clone", "--depth", "1", "https://github.com/ggml-org/llama.cpp", $LlamaCppDir)
 }
 if (-not $SkipPipInstall) {
-    $reqs = Join-Path $LlamaCppDir "requirements\requirements-convert_hf_to_gguf.txt"
-    Write-Host "Installing convert requirements (large; includes torch) ..."
-    Exec $Python @("-m", "pip", "install", "-r", $reqs)
+    # Install convert_hf_to_gguf.py's deps as WHEELS ONLY. We deliberately do NOT
+    # use llama.cpp's requirements file: it pins numpy~=1.26.4, which has no wheel
+    # for newer Python (3.13+) and falls back to a source build needing an MSVC
+    # toolchain (fails on a compiler-less box). An unpinned numpy (2.x) works with
+    # the converter and the in-repo gguf-py. --only-binary guarantees pip never
+    # invokes a compiler (a missing wheel errors clearly instead of building).
+    Write-Host "Installing convert dependencies (wheels only; includes torch CPU) ..."
+    $pipPkgs = @("numpy", "torch", "transformers", "sentencepiece", "protobuf", "pyyaml", "tqdm", "safetensors")
+    Exec $Python (@("-m", "pip", "install", "-U", "--only-binary=:all:",
+            "--extra-index-url", "https://download.pytorch.org/whl/cpu") + $pipPkgs)
 }
 Exec $Python @($convertPy, $snapshotDir, "--outfile", $f16Path, "--outtype", "f16")
 
