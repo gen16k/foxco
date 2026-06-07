@@ -1,4 +1,4 @@
-# 公式GGUFの -hf 直DLへ切替 (20260607 13:20) #pending
+# 公式GGUFの -hf 直DLへ切替 (20260607 13:20) #a9d8375
 
 ## Motivation
 
