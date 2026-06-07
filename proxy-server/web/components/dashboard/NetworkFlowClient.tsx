@@ -90,7 +90,10 @@ export function NetworkFlowClient() {
   const handleBlock = useCallback((reason?: string) => {
     const id = ++popupId.current;
     const label = blockCategory(reason);
-    const dx = Math.round((Math.random() - 0.5) * 150);
+    // Bias popups to the LEFT of the gate (which is at canvas center) so they
+    // don't overlap the node or its right-side label; small scatter for the
+    // FF14 feel. dx is consumed as `calc(-50% + var(--nf-x))`.
+    const dx = -170 + Math.round((Math.random() - 0.5) * 120);
     setPopups((cur) => {
       const next = [...cur, { id, label, dx }];
       return next.length > MAX_POPUPS ? next.slice(next.length - MAX_POPUPS) : next;

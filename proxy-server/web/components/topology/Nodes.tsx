@@ -20,12 +20,14 @@ const gateHot = new THREE.Color("#f85149");
 // a localhost/offline admin tool — need no web font from a CDN. Each label is a
 // logo + text on a dark pill so it stays readable over the bloom glow. The label
 // is anchored at the node center (which sits on the Y axis, so it holds a stable
-// screen position while the camera auto-rotates) and pushed to the side in
-// screen space so it never overlaps the node or swings around it.
+// screen position while the camera auto-rotates). We DON'T use `center`: the pill
+// is shifted right (and vertically centered via -50%) in screen space so its LEFT
+// EDGE always clears the glowing mesh — no overlap, no swing — regardless of how
+// wide the text is.
 function NodeLabel({ icon, title, sub }: { icon: ReactNode; title: string; sub: string }) {
   return (
-    <Html position={[0, 0, 0]} center zIndexRange={[20, 0]}>
-      <div className="pointer-events-none select-none" style={{ transform: "translateX(66px)" }}>
+    <Html position={[0, 0, 0]} zIndexRange={[20, 0]}>
+      <div className="pointer-events-none select-none" style={{ transform: "translate(84px, -50%)" }}>
         <div className="flex items-center gap-2 rounded-md border border-edge/70 bg-ink/75 px-2.5 py-1.5 backdrop-blur-sm">
           <span className="grid h-6 w-6 shrink-0 place-items-center text-xl leading-none">{icon}</span>
           <div className="whitespace-nowrap leading-tight">
