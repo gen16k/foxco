@@ -11,6 +11,13 @@
 #   .\start.ps1 -NoWeb                # proxy (and sidecar) only, no admin UI
 #   .\start.ps1 -SidecarOnly          # sidecar only, FOREGROUND (service RunOnDemand task)
 #   .\start.ps1 -WebOnly              # admin UI only, FOREGROUND (service RunOnDemand task)
+#   .\start.ps1 -Offline on           # force cache-only sidecar (fails if not cached)
+#
+# Model caching: by default (-Offline auto) the sidecar starts with llama.cpp's
+# --offline flag whenever the requested GGUF is already in the local cache, so it
+# loads straight from disk with no download and no per-start HF etag/manifest check.
+# A machine that has not cached the model yet downloads it once via -hf (then it is
+# cached for next time); pass -Offline off to always re-check the network.
 #
 # The admin UI starts on http://127.0.0.1:3939 (loopback only). It reads the proxy's
 # admin API; this script passes the API address + admin.auth_token from the chosen
@@ -47,6 +54,8 @@ param(
     [string]$LlamaHost = "127.0.0.1",
     [int]$LlamaPort = 8791,                     # must match inference.endpoint in config
     [int]$HealthTimeoutSec = 600,              # first run downloads the GGUF + compiles Vulkan shaders
+    [ValidateSet("auto", "on", "off")]
+    [string]$Offline = "auto",                 # "auto": use the cache offline if the model is already cached, else download once; "on": force --offline; "off": always allow network
     [switch]$NoSidecar,
     [switch]$SidecarOnly,                      # FOREGROUND sidecar only; no proxy/UI (service RunOnDemand task)
     [switch]$WebOnly,                          # FOREGROUND admin UI only; no proxy/sidecar (service RunOnDemand task)
@@ -69,6 +78,20 @@ function Test-LlamaHealth {
     }
 }
 
+# True if the given -hf model ref is already in llama.cpp's local cache. We ask
+# llama-server itself (`--cache-list`) so the answer matches whatever cache dir it
+# actually uses (HF hub layout under HF_HOME / LLAMA_CACHE / %LOCALAPPDATA%). Used
+# to decide whether we can start with --offline (no network) on this machine.
+function Test-LlamaModelCached([string]$ModelRef) {
+    try {
+        $list = & $LlamaServer --cache-list 2>$null
+        foreach ($line in $list) {
+            if ($line -match [regex]::Escape($ModelRef)) { return $true }
+        }
+    } catch { }
+    return $false
+}
+
 # Parse the proxy admin API address + token from the chosen config and export them
 # so the Next.js admin UI talks to this proxy without extra setup. Shared by the
 # console web start and the -WebOnly task branch.
@@ -85,8 +108,27 @@ function Set-AdminEnvFromConfig([string]$cfgPath) {
 # a local GGUF path (-m).
 function Get-LlamaArgs {
     $ngl = if ($Backend -eq "vulkan") { 99 } else { 0 }
-    $modelArg = if (Test-Path $Model) { @("-m", $Model) } else { @("-hf", $Model) }
-    return $modelArg + @("--host", $LlamaHost, "--port", "$LlamaPort", "--jinja", "-ngl", "$ngl")
+    $isHfRef = -not (Test-Path $Model)
+    $modelArg = if ($isHfRef) { @("-hf", $Model) } else { @("-m", $Model) }
+    $extra = @()
+    # Model caching: when the GGUF is already cached, start with --offline so
+    # llama-server reads it straight from cache and never hits the network — no
+    # per-start re-download or HF etag/manifest check. On a machine that has not
+    # cached it yet (e.g. a fresh box), we must NOT pass --offline or the first run
+    # would fail with no way to download; -hf fetches it once, then it is cached for
+    # next time. Local -m paths are already on disk. Override with -Offline on/off.
+    $useOffline = switch ($Offline) {
+        "on"  { $true }
+        "off" { $false }
+        default { $isHfRef -and (Test-LlamaModelCached $Model) }
+    }
+    if ($useOffline) {
+        $extra += "--offline"
+        Write-Host "Model '$Model' is cached -> starting offline (no download, no network check)."
+    } elseif ($isHfRef) {
+        Write-Host "Model '$Model' not in cache -> will download via -hf (cached for next time)."
+    }
+    return $modelArg + @("--host", $LlamaHost, "--port", "$LlamaPort", "--jinja", "-ngl", "$ngl") + $extra
 }
 
 # ---- Service RunOnDemand task: FOREGROUND sidecar only -----------------------
