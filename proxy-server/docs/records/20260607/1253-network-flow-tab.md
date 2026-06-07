@@ -64,6 +64,28 @@
 - WebGL 不可時は `StaticFallback`（擬似3D）へ自動 degrade。reduced-motion / タブ非表示時の
   省電力（autoRotate/bloom 抑制、`frameloop="never"`）も実装。
 
+## 追補 (20260607 13:2x) — ポップアップ表記 + ノードロゴ
+
+ユーザー要望（「FF14 ダメージ表記のようなポップアップでブロックのジャンルを出す」「文字が
+読みにくいので Claude ロゴを併記」「PromptGate にキツネロゴ」）に対応:
+
+- `lib/block-category.ts`: ブロック reason → 簡潔なジャンル表記へマップ（AWS KEY / EMAIL /
+  個人情報 等。英語ルール reason・LFM 表現・日本語カテゴリ・フォールバック BLOCKED）。
+- `components/topology/Marks.tsx`: `ClaudeMark`（Anthropic 風スパーク SVG、clay）と
+  `TerminalMark`（Client 用ターミナル SVG）。フォントや外部アセットを取りに行かない SVG。
+- `Nodes.tsx`: ラベルを「ロゴ + テキスト + 暗いピル背景（`bg-ink/75 backdrop-blur`）」へ刷新し
+  可読性を改善。Claude=ClaudeMark、PromptGate=🦊 絵文字（TopBar ブランドと一致）、
+  Client=TerminalMark。ラベルはノード中心（Y 軸上）にアンカーしスクリーン空間で右へ
+  オフセット → 自動回転でも揺れず重ならない。`distanceFactor` を外し固定サイズで読みやすく。
+- 赤パケットが gate で炸裂する瞬間に `Packets`→`TopologyScene`→`NetworkFlowClient` の
+  `onBlock(reason)` を発火（フレームループ内・ブロック時のみの低頻度）。クライアントは
+  ジャンルを FF14 風フロートテキスト（pop→上昇→フェード、横スクラッタ、赤グロー）で表示。
+  gate はシーン原点＝Canvas 中央なのでポップアップは中央アンカーで済む。最大同時数を制限し
+  各ポップアップは時限で除去。reduced-motion 短縮対応。
+- 再検証: typecheck PASS / build PASS（`/network` 105kB、three は遅延ロード維持）。
+  ※ `next dev` 実行後に `next build` すると `.next` が dev/prod 混在で壊れ ENOENT になるため、
+  build 前に `.next` を削除する必要がある（dev と build を同一ディレクトリで往復した場合）。
+
 ## Refs
 - 実プロキシでの目視確認（緑フロー・実トラフィックでの赤ブロック）は未実施。
   `.\start.ps1 -Classifier keyword` で proxy を立て、Claude Code を通し、良性プロンプト=緑、

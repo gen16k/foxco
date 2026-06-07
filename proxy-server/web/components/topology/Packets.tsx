@@ -27,12 +27,15 @@ interface PacketsProps {
   gatePulse: MutableRefObject<number>;
   counters: MutableRefObject<PacketCounters>;
   reducedMotion: boolean;
+  // Fired once, when a red packet starts bursting at the gate, so the parent can
+  // raise a floating "blocked genre" popup.
+  onBlock?: (reason?: string) => void;
 }
 
 // All packets render from ONE instanced mesh (a single draw call). Every frame we
 // recompute each live packet's matrix + color from the renderer-agnostic store;
 // React never re-renders for this. Unused instances are scaled to 0 (hidden).
-export function Packets({ store, gatePulse, counters, reducedMotion }: PacketsProps) {
+export function Packets({ store, gatePulse, counters, reducedMotion, onBlock }: PacketsProps) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const dummy = useMemo(() => new THREE.Object3D(), []);
   const tmpColor = useMemo(() => new THREE.Color(), []);
@@ -92,6 +95,7 @@ export function Packets({ store, gatePulse, counters, reducedMotion }: PacketsPr
           if (p.phase !== "bursting") {
             p.phase = "bursting";
             gatePulse.current = 1; // kick the gate's red pulse once
+            onBlock?.(p.reason); // raise the floating genre popup once
           }
           const bt = (t - RED_RISE_FRACTION) / (1 - RED_RISE_FRACTION); // 0..1
           const burst = Math.sin(bt * Math.PI); // 0 -> 1 -> 0

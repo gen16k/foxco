@@ -15,9 +15,10 @@ export interface TopologySceneProps {
   // When the tab is hidden we stop the render loop entirely to spare the GPU.
   paused: boolean;
   reducedMotion: boolean;
+  onBlock?: (reason?: string) => void;
 }
 
-export function TopologyScene({ store, counters, paused, reducedMotion }: TopologySceneProps) {
+export function TopologyScene({ store, counters, paused, reducedMotion, onBlock }: TopologySceneProps) {
   // Shared scalar the gate node reads to flash red when a packet is blocked.
   const gatePulse = useRef(0);
 
@@ -34,7 +35,13 @@ export function TopologyScene({ store, counters, paused, reducedMotion }: Topolo
       <pointLight position={[-6, -5, -6]} intensity={1.1} decay={0} color="#3d8bfd" />
       <Nodes gatePulse={gatePulse} />
       <Links />
-      <Packets store={store} gatePulse={gatePulse} counters={counters} reducedMotion={reducedMotion} />
+      <Packets
+        store={store}
+        gatePulse={gatePulse}
+        counters={counters}
+        reducedMotion={reducedMotion}
+        onBlock={onBlock}
+      />
       <Effects reducedMotion={reducedMotion} />
       <CameraRig reducedMotion={reducedMotion} />
     </Canvas>

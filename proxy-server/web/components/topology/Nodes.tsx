@@ -5,6 +5,7 @@ import { useFrame } from "@react-three/fiber";
 import { Float, Html } from "@react-three/drei";
 import * as THREE from "three";
 import { NODE_Y } from "@/lib/topology-packets";
+import { ClaudeMark, TerminalMark } from "./Marks";
 
 // Node accent colors. Claude = Anthropic clay, Client = dashboard accent blue,
 // PromptGate = emerald (focal) that pulses red when it blocks a packet.
@@ -15,16 +16,23 @@ const GATE = "#34d399";
 const gateBase = new THREE.Color(GATE);
 const gateHot = new THREE.Color("#f85149");
 
-// HTML labels (instead of drei <Text>) keep typography crisp, stay readable under
-// bloom, and — crucially for a localhost/offline admin tool — need no web font
-// fetched from a CDN. Nodes sit on the Y axis (x=z=0), so they stay centered
-// while the camera auto-rotates; the labels therefore don't swing around.
-function NodeLabel({ title, sub }: { title: string; sub: string }) {
+// HTML labels (instead of drei <Text>) keep typography crisp and — crucially for
+// a localhost/offline admin tool — need no web font from a CDN. Each label is a
+// logo + text on a dark pill so it stays readable over the bloom glow. The label
+// is anchored at the node center (which sits on the Y axis, so it holds a stable
+// screen position while the camera auto-rotates) and pushed to the side in
+// screen space so it never overlaps the node or swings around it.
+function NodeLabel({ icon, title, sub }: { icon: ReactNode; title: string; sub: string }) {
   return (
-    <Html position={[0.95, 0, 0]} center distanceFactor={11} zIndexRange={[10, 0]}>
-      <div className="pointer-events-none select-none whitespace-nowrap pl-2">
-        <div className="text-sm font-semibold text-zinc-100">{title}</div>
-        <div className="text-2xs text-zinc-400">{sub}</div>
+    <Html position={[0, 0, 0]} center zIndexRange={[20, 0]}>
+      <div className="pointer-events-none select-none" style={{ transform: "translateX(66px)" }}>
+        <div className="flex items-center gap-2 rounded-md border border-edge/70 bg-ink/75 px-2.5 py-1.5 backdrop-blur-sm">
+          <span className="grid h-6 w-6 shrink-0 place-items-center text-xl leading-none">{icon}</span>
+          <div className="whitespace-nowrap leading-tight">
+            <div className="text-sm font-semibold text-zinc-50">{title}</div>
+            <div className="text-2xs text-zinc-400">{sub}</div>
+          </div>
+        </div>
       </div>
     </Html>
   );
@@ -103,7 +111,7 @@ function GateNode({ gatePulse }: { gatePulse: MutableRefObject<number> }) {
           </mesh>
         </Float>
       </group>
-      <NodeLabel title="PromptGate" sub="DLP 検査" />
+      <NodeLabel icon={<span className="text-2xl leading-none">🦊</span>} title="PromptGate" sub="DLP 検査" />
     </group>
   );
 }
@@ -112,11 +120,11 @@ export function Nodes({ gatePulse }: { gatePulse: MutableRefObject<number> }) {
   return (
     <>
       <GlowNode y={NODE_Y.claude} color={CLAUDE} radius={0.62}>
-        <NodeLabel title="Claude" sub="Anthropic API" />
+        <NodeLabel icon={<ClaudeMark />} title="Claude" sub="Anthropic API" />
       </GlowNode>
       <GateNode gatePulse={gatePulse} />
       <GlowNode y={NODE_Y.client} color={CLIENT} radius={0.55}>
-        <NodeLabel title="Client" sub="Claude Code" />
+        <NodeLabel icon={<TerminalMark />} title="Client" sub="Claude Code" />
       </GlowNode>
     </>
   );

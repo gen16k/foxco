@@ -1,14 +1,32 @@
 "use client";
 
-import { Component, useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  Component,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import dynamic from "next/dynamic";
 import { useRecentEvents } from "@/lib/swr";
 import { Panel } from "@/components/common/Panel";
 import { StaticFallback } from "@/components/topology/StaticFallback";
 import { hasWebGL } from "@/lib/webgl";
+import { blockCategory } from "@/lib/block-category";
 import { createPacketStore, type PacketStore, type PacketCounters } from "@/lib/topology-packets";
 import { makeDemoPacket, DEMO_IDLE_MS, DEMO_TICK_MS } from "@/lib/topology-demo";
 import type { TopologySceneProps } from "@/components/topology/TopologyScene";
+
+// One floating "blocked genre" popup (FF14 damage-text style).
+interface Popup {
+  id: number;
+  label: string;
+  dx: number; // horizontal scatter, px
+}
+const MAX_POPUPS = 16;
+const POPUP_MS = 1700;
 
 // The WebGL scene is loaded client-side only — three.js/react-three-fiber touch
 // `document`/WebGL and must never run during SSR. Lazy-loading also keeps three
@@ -64,6 +82,21 @@ export function NetworkFlowClient() {
   const [hidden, setHidden] = useState(false);
   const [gl, setGl] = useState<boolean | null>(null);
   const [stats, setStats] = useState<PacketCounters>({ green: 0, red: 0, active: 0 });
+  const [popups, setPopups] = useState<Popup[]>([]);
+  const popupId = useRef(0);
+
+  // Raised from the scene's frame loop when a red packet bursts. Low-frequency
+  // (blocks only), so updating React state here is fine. Each popup self-expires.
+  const handleBlock = useCallback((reason?: string) => {
+    const id = ++popupId.current;
+    const label = blockCategory(reason);
+    const dx = Math.round((Math.random() - 0.5) * 150);
+    setPopups((cur) => {
+      const next = [...cur, { id, label, dx }];
+      return next.length > MAX_POPUPS ? next.slice(next.length - MAX_POPUPS) : next;
+    });
+    window.setTimeout(() => setPopups((cur) => cur.filter((p) => p.id !== id)), POPUP_MS);
+  }, []);
 
   useEffect(() => {
     setGl(hasWebGL());
@@ -154,9 +187,42 @@ export function NetworkFlowClient() {
               counters={counters}
               paused={hidden}
               reducedMotion={reducedMotion}
+              onBlock={handleBlock}
             />
           </SceneBoundary>
         )}
+
+        {/* FF14-style floating "blocked genre" popups, centered on PromptGate
+            (which sits at the scene origin = the canvas center). */}
+        <div className="pointer-events-none absolute inset-0 z-30 overflow-hidden">
+          <style>{`
+            @keyframes nf-dmg {
+              0%   { transform: translate(calc(-50% + var(--nf-x)), -50%) scale(.4); opacity: 0 }
+              14%  { transform: translate(calc(-50% + var(--nf-x)), -62%) scale(1.28); opacity: 1 }
+              30%  { transform: translate(calc(-50% + var(--nf-x)), -78%) scale(1); opacity: 1 }
+              100% { transform: translate(calc(-50% + var(--nf-x)), -190%) scale(.95); opacity: 0 }
+            }
+            @media (prefers-reduced-motion: reduce) {
+              .nf-dmg { animation-duration: 1.1s !important }
+            }
+          `}</style>
+          {popups.map((p) => (
+            <span
+              key={p.id}
+              className="nf-dmg absolute left-1/2 top-1/2 whitespace-nowrap font-extrabold tracking-wide text-block"
+              style={
+                {
+                  fontSize: 22,
+                  textShadow: "0 0 10px rgba(248,81,73,.95), 0 2px 3px rgba(0,0,0,.85)",
+                  animation: `nf-dmg ${POPUP_MS}ms ease-out forwards`,
+                  "--nf-x": `${p.dx}px`,
+                } as CSSProperties
+              }
+            >
+              {p.label}
+            </span>
+          ))}
+        </div>
 
         <div className="pointer-events-none absolute left-3 top-3 flex flex-col gap-1 text-2xs">
           <span className="text-zinc-400">
