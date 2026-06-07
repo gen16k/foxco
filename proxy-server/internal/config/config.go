@@ -166,11 +166,16 @@ func Default() Config {
 		},
 		DLP: DLP{
 			FailClosed: true,
-			// CPU LFM inference (esp. the first request after an idle gap, when
-			// the prompt cache is cold) can exceed 1.5s; too tight a timeout
-			// fail-closes benign requests. 5s gives CPU headroom; warm calls are
-			// ~200-300ms. Lower this for GPU/NPU backends.
-			ClassifyTimeoutMS: 5000,
+			// The default profile (jp_confidential_extraction) emits a multi-key
+			// JSON object (up to ~384 tokens), not a few-token verdict, so a full
+			// classify generates far more than the old binary classifiers did. On
+			// CPU/iGPU that decode — plus a cold prompt cache or one-time shader
+			// compilation on the first call — can exceed 8s. Too tight a timeout
+			// fail-closes benign requests every time (context deadline exceeded →
+			// the "classifier warming" block). 30s gives CPU/iGPU headroom; warm
+			// classifier-profile calls are ~200-300ms, so lower this if you swap to
+			// a binary profile or a faster (NPU) backend.
+			ClassifyTimeoutMS: 30000,
 			BlockResponseMode: "assistant_message",
 			RuleGuardrail:     RuleGuardrail{Enabled: true},
 			Bypass:            Bypass{Enabled: true, Marker: "#dlp-allow"},

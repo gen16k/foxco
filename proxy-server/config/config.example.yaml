@@ -50,13 +50,15 @@ upstream:
 dlp:
   # On classifier failure/timeout, block rather than allow egress.
   fail_closed: true
-  # LFM inference can spike on the first/cold call: on CPU past ~1.5s, and on the
-  # AMD iGPU (Vulkan) the first call also pays one-time shader compilation (the
-  # GGUF download on a fresh machine is even slower, but that completes before the
-  # sidecar reports healthy). Too tight a timeout fail-closes benign requests, so
-  # 8s is generous headroom. Warm calls are ~200-300ms; once warm you can lower
-  # this for the iGPU (Vulkan)/NPU.
-  classify_timeout_ms: 8000
+  # The default profile (jp_confidential_extraction) generates a multi-key JSON
+  # object (up to ~384 tokens), so a classify decode is far heavier than the old
+  # few-token binary verdict. On CPU/iGPU that decode — plus a cold prompt cache
+  # or the AMD iGPU's one-time Vulkan shader compilation on the first call — can
+  # exceed 8s and fail-close every benign request (context deadline exceeded →
+  # the "classifier warming" block). 30s is generous headroom; warm
+  # classifier-profile calls are ~200-300ms, so lower this if you swap to a binary
+  # profile or a faster (NPU) backend.
+  classify_timeout_ms: 30000
   block_response_mode: "assistant_message"
   rule_guardrail:
     # Deterministic secret/API-key guardrail. The LFM remains the primary
