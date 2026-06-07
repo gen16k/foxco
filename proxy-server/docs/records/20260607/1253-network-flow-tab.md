@@ -86,6 +86,21 @@
   ※ `next dev` 実行後に `next build` すると `.next` が dev/prod 混在で壊れ ENOENT になるため、
   build 前に `.next` を削除する必要がある（dev と build を同一ディレクトリで往復した場合）。
 
+## 追補2 (20260607 13:4x) — デモ用モック起動スクリプト
+
+ユーザー要望（モック画面をデモ用に本番と別ポートで起動したい）に対応:
+
+- `web/start-mock.ps1`: `USE_MOCK=1` + 別ポート（既定 3940、`-Port` で変更）で admin UI を
+  起動。既定は `next dev`、`-Prod` で build→`next start`。本番（3939/`.next`）と共存できるよう
+  **ビルド出力も分離**する。
+- `next.config.mjs`: `distDir = process.env.NEXT_DIST_DIR || ".next"`。スクリプトは
+  `NEXT_DIST_DIR=.next-mock` を設定し、本番の `.next` を壊さない（dev/prod キャッシュ衝突の回避）。
+- `tsconfig.json`: `include` に `.next-mock/types/**/*.ts` を恒久追加。これが無いと Next が
+  起動時に tsconfig を自動書き換えして毎回 git が汚れる（事前追加で書き換えを抑止）。
+- `.gitignore`: `proxy-server/web/.next-mock/` を追加。
+- 検証: `start-mock.ps1 -Port 3941` で起動 → login 200 / `/network` 200、tsconfig 自動編集なし
+  （"reconfigured your tsconfig" 非出力）、`.next-mock` 生成・`.next` 不変、typecheck PASS。
+
 ## Refs
 - 実プロキシでの目視確認（緑フロー・実トラフィックでの赤ブロック）は未実施。
   `.\start.ps1 -Classifier keyword` で proxy を立て、Claude Code を通し、良性プロンプト=緑、
