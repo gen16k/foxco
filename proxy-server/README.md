@@ -25,15 +25,23 @@ Claude Code --(ANTHROPIC_BASE_URL=http://127.0.0.1:8787)--> Proxy
          -> sanitize history (remove sensitive tool/turn units) -> forward upstream
 ```
 
-- **Binary classifier.** The LFM returns `{reason, decision: ALLOW|BLOCK}`;
-  `BLOCK -> block`, `ALLOW -> forward`. The rule guardrail short-circuits to
-  BLOCK on unambiguous secrets (AWS/Anthropic/Google keys, private-key blocks,
-  ...). The full prompt/schema/parse contract is a swappable `PromptProfile`
-  (`internal/inference/profile.go`) — select via `inference.profile`, or
-  override just the prompt with `inference.system_prompt_file`, when you
-  fine-tune a model. Parsing is tolerant (llama.cpp does not always enforce the
-  JSON schema), and the segment is wrapped in `<<<DATA>>>` delimiters so the
-  small model treats it as inert data, not instructions.
+- **Model -> binary verdict.** The proxy reduces the LFM output to
+  `BLOCK -> block` / `ALLOW -> forward`. The default model is the akiFQC
+  **Conf-Extract** Japanese family (profile `jp_confidential_extraction`): an
+  11-category confidential-entity extractor — any non-empty category => BLOCK,
+  and only the category *names* (never the extracted values) reach the reason /
+  audit log. The deterministic rule guardrail short-circuits to BLOCK on
+  unambiguous secrets (AWS/Anthropic/Google keys, private-key blocks, ...) and
+  backstops anything outside those 11 categories. The full prompt/schema/parse
+  contract is a swappable `PromptProfile` (`internal/inference/profile.go`) —
+  select via `inference.profile` (also built in: `reason_decision` / `ng_boolean`
+  generic ALLOW/BLOCK classifiers), or pin the exact prompt with
+  `inference.system_prompt_file`. Parsing is tolerant (llama.cpp does not always
+  enforce the JSON schema). The classifier profiles wrap each segment in
+  `<<<DATA>>>` delimiters so the small model treats it as inert data; the
+  extraction profile sends raw text to match its training distribution — an
+  extraction model has no verdict field for an injection to flip, so the worst
+  case is a missed entity, which the rule guardrail + fail-closed still backstop.
 - **Stateless + fingerprint cache.** Every request is fully re-evaluated; a
   content-addressed cache means each segment is classified once. No HMAC
   markers, block registry, or session-id reconstruction.
@@ -77,15 +85,39 @@ The Vulkan runtime ships with the AMD Adrenalin graphics driver (`vulkan-1.dll`)
 only if it is missing, add it with `winget install KhronosGroup.VulkanRT`. ROCm is
 **not** used — it does not support AMD iGPUs on Windows, so Vulkan is the path.
 
+### DLP model (one-time GGUF conversion)
+
+The default DLP model is the akiFQC **Conf-Extract** Japanese family. These
+checkpoints ship as safetensors only, so convert one to GGUF once; `start.ps1`
+then loads the local `.gguf`. The whole family shares one I/O contract
+(`jp_confidential_extraction`), so changing model size is just a different
+`-Model` — no code or config-profile change.
+
+```powershell
+# 1.2B (default). Produces .\models\LFM2.5-1.2B-JP-202606-Conf-Extract-Q4_K_M.gguf
+.\scripts\convert-model-gguf.ps1
+
+# or the smaller/faster 350M
+.\scripts\convert-model-gguf.ps1 -Repo akiFQC/LFM2-350M-Conf-Extract-Japanese
+```
+
+Needs Python 3, git, and `llama-quantize` (from the winget llama.cpp). See the
+script header for options (`-Quant`, `-OutDir`, `-HfToken`, ...). Once a prebuilt
+`*-GGUF` repo exists upstream you can skip conversion and pass an `-hf` ref:
+`.\start.ps1 -Model akiFQC/<repo>-GGUF:Q4_K_M`.
+
 ### Launch
 
 `start.ps1` is a one-command launcher: it starts the sidecar, waits for it to become
 healthy, then starts the proxy.
 
 ```powershell
-# Option A: real LFM on the integrated Radeon iGPU via Vulkan (LFM2.5 GGUF,
-# auto-downloaded on first run). This is the default backend.
+# Option A: real LFM on the integrated Radeon iGPU via Vulkan, loading the
+# converted Conf-Extract GGUF from .\models (see "DLP model" above). Default backend.
 .\start.ps1
+
+# Use a different family member (e.g. the 350M after converting it)
+.\start.ps1 -Model .\models\LFM2-350M-Conf-Extract-Japanese-Q4_K_M.gguf
 
 # Same, but keep inference on the CPU (always-works fallback)
 .\start.ps1 -Backend cpu
@@ -114,7 +146,7 @@ claude
 | `internal/proxy` | request flow handler (parse → evaluate → sanitize → forward) |
 | `internal/anthropic` | Messages API types (round-trip safe), block response, SSE, forwarder |
 | `internal/dlp` | normalize, segment, rule guardrail, cache, LFM detector/policy |
-| `internal/inference` | llama.cpp client (LFM) + keyword fallback classifier |
+| `internal/inference` | llama.cpp client (LFM) + keyword fallback classifier + `PromptProfile` |
 | `internal/sanitizer` | structure-aware history unit removal + validation |
 | `internal/storage` | SQLite audit log (no raw text / secrets) |
 | `internal/config` | YAML config + safe defaults |

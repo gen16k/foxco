@@ -8,6 +8,20 @@
 #   .\start.ps1 -Classifier keyword   # no model: deterministic keyword fallback
 #   .\start.ps1 -NoSidecar            # proxy only (sidecar already running)
 #
+# DLP model — the akiFQC LFM2 *-Conf-Extract Japanese family (11-category
+# confidential-entity extractor; config profile `jp_confidential_extraction`).
+# These checkpoints ship as safetensors only, so convert once to GGUF and point
+# -Model at the local file. The whole family shares one I/O contract, so changing
+# size is just a different -Model — the config profile never changes:
+#
+#   # one-time per checkpoint: safetensors -> GGUF (see scripts\convert-model-gguf.ps1)
+#   .\scripts\convert-model-gguf.ps1                                   # 1.2B (default)
+#   .\scripts\convert-model-gguf.ps1 -Repo akiFQC/LFM2-350M-Conf-Extract-Japanese   # 350M
+#
+#   .\start.ps1                                                        # uses the default 1.2B gguf
+#   .\start.ps1 -Model .\models\LFM2-350M-Conf-Extract-Japanese-Q4_K_M.gguf         # swap to 350M
+#   .\start.ps1 -Model akiFQC/<repo>-GGUF:Q4_K_M                       # later: -hf ref once a GGUF repo exists
+#
 # GPU acceleration uses the **Vulkan** build of llama.cpp on the integrated
 # Radeon (RDNA 3.5). ROCm does not support AMD iGPUs on Windows, so Vulkan is the
 # path; CPU (-Backend cpu) is the always-works fallback. Verify the iGPU is
@@ -25,7 +39,7 @@ param(
     [string]$Classifier = "",                  # "" (config default / llama) or "keyword"
     [ValidateSet("vulkan", "cpu")]
     [string]$Backend = "vulkan",               # iGPU (Vulkan) by default; "cpu" to fall back
-    [string]$Model = "LiquidAI/LFM2.5-1.2B-Instruct-GGUF:Q4_K_M",  # -hf ref or local .gguf path
+    [string]$Model = ".\models\LFM2.5-1.2B-JP-202606-Conf-Extract-Q4_K_M.gguf",  # local .gguf path OR -hf ref
     [string]$LlamaServer = "llama-server",     # path to llama-server(.exe); default: on PATH
     [string]$LlamaHost = "127.0.0.1",
     [int]$LlamaPort = 8791,                     # must match inference.endpoint in config
@@ -62,8 +76,20 @@ if ($useSidecar) {
     } else {
         # vulkan -> offload all layers to the iGPU; cpu -> keep everything on CPU.
         $ngl = if ($Backend -eq "vulkan") { 99 } else { 0 }
-        # Accept either a HuggingFace ref (auto-download via -hf) or a local GGUF path.
-        $modelArg = if (Test-Path $Model) { @("-m", $Model) } else { @("-hf", $Model) }
+        # Accept either a local GGUF path (-m) or a HuggingFace ref (auto-download
+        # via -hf). A *.gguf path that does not exist is almost always a missing
+        # local conversion, so fail with a pointer to the convert script rather than
+        # silently mis-handing the path to -hf.
+        if (Test-Path $Model) {
+            $modelArg = @("-m", $Model)
+        } elseif ($Model -match '\.gguf$') {
+            throw ("GGUF not found: $Model`n" +
+                "This Conf-Extract checkpoint ships as safetensors only — convert it once:`n" +
+                "  .\scripts\convert-model-gguf.ps1`n" +
+                "then re-run, or pass -Model <existing.gguf> / -Model <repo>-GGUF:<quant> (-hf).")
+        } else {
+            $modelArg = @("-hf", $Model)
+        }
         $llamaArgs = $modelArg + @(
             "--host", $LlamaHost, "--port", "$LlamaPort", "--jinja", "-ngl", "$ngl"
         )

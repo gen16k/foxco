@@ -1,0 +1,9 @@
+# Build artifact
+/proxy.exe
+
+# Local GGUF models produced by scripts\convert-model-gguf.ps1 (large; not source).
+/models/
+
+# Conversion working area: HuggingFace snapshots + a llama.cpp checkout for
+# convert_hf_to_gguf.py (see scripts\convert-model-gguf.ps1).
+/.cache/

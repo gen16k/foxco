@@ -23,6 +23,8 @@ dlp:
   rule_guardrail:
     # Deterministic secret/API-key guardrail. The LFM remains the primary
     # classifier; this is the insurance layer for blatant credential leaks.
+    # Set to false for an LFM-only pipeline (the model becomes the sole
+    # classifier); true keeps both layers (recommended in production).
     enabled: true
 
 inference:
@@ -33,15 +35,29 @@ inference:
   # to "keyword" to run without a model (dev/CI/demo fallback).
   type: "llama_cpp_http"
   endpoint: "http://127.0.0.1:8791"
-  model: "LFM2.5-1.2B"
+  # Label only (audit log + request body). The sidecar serves whatever GGUF it was
+  # launched with (start.ps1 -Model), so this is just the human-readable model id;
+  # keep it in sync with the loaded checkpoint.
+  model: "LFM2.5-1.2B-JP-202606-Conf-Extract"
   warmup_on_start: true
   health_timeout_ms: 500
-  # LFM I/O contract (prompt + schema + output parsing). Swap this when a
-  # fine-tuned model expects a different format. Built-ins: "reason_decision"
-  # (default), "ng_boolean". Register more in internal/inference/profile.go.
-  profile: "reason_decision"
-  # Optional: override just the profile's system prompt from a file (handy while
-  # iterating on a fine-tuned model without rebuilding).
+  # LFM I/O contract (prompt + schema + output parsing). Must match the loaded
+  # checkpoint's training format. Built-ins:
+  #   jp_confidential_extraction (default) — for the akiFQC LFM2 *-Conf-Extract
+  #     Japanese family (e.g. akiFQC/LFM2.5-1.2B-JP-202606-Conf-Extract, or the
+  #     350M akiFQC/LFM2-350M-Conf-Extract-Japanese): an 11-category entity
+  #     EXTRACTION model (plain-text input, JSON entity-list output); any non-empty
+  #     category => BLOCK. The whole family shares this contract, so swapping size
+  #     only changes start.ps1 -Model (and this `model` label) — not the profile.
+  #   reason_decision — {"reason","decision":ALLOW|BLOCK} generic classifier
+  #     (for a general instruct model such as LFM2.5-1.2B-Instruct).
+  #   ng_boolean      — {"ng","short_reason"} boolean classifier.
+  # Register more in internal/inference/profile.go.
+  profile: "jp_confidential_extraction"
+  # Optional: override just the profile's system prompt from a file. Use this to
+  # pin the deployed checkpoint's EXACT training prompt byte-for-byte if it ever
+  # drifts from the built-in (a small model's extraction accuracy is sensitive to
+  # full/half-width punctuation and newlines).
   # system_prompt_file: "C:\\path\\to\\system_prompt.txt"
 
 cache:

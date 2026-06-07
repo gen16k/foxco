@@ -1,5 +1,45 @@
 # Decision Log
 
+## 既定DLPモデルを akiFQC Conf-Extract 日本語ファミリへ切替（GGUFローカル変換 + 抽出契約を既定化） (20260607 12:24)
+
+### Status
+Accepted
+
+### Context
+
+既定モデルを汎用2値分類器 `LFM2.5-1.2B-Instruct`（プロファイル `reason_decision`）から、社外秘抽出に
+特化した **akiFQC Conf-Extract 日本語ファミリ**へ切り替える（ユーザー指定）。既定チェックポイントは
+`akiFQC/LFM2.5-1.2B-JP-202606-Conf-Extract`（1.2B）、軽量版は `akiFQC/LFM2-350M-Conf-Extract-Japanese`。
+将来も同系統の別サイズ/版へ容易に差し替えたい要件がある。これらは **safetensors のみで GGUF 未提供**だが、
+推論は llama.cpp（GGUF 必須）。抽出契約自体は別ブランチの commit `d3c8ad1` で実装済みの
+`jp_confidential_extraction` プロファイルを移植して用いる。
+
+### Decision
+
+- **既定プロファイルを `jp_confidential_extraction` に変更**（`config` 既定 + `config.example.yaml`）。
+  11カテゴリ抽出の非空→BLOCK。`reason_decision`/`ng_boolean` は選択肢として存続。
+- **GGUF はローカル変換運用**。補助スクリプト `scripts/convert-model-gguf.ps1`（`-Repo` でファミリ指定、
+  HF snapshot→`convert_hf_to_gguf.py` f16→`llama-quantize`）を追加。`start.ps1 -Model` はローカル `.gguf` を
+  指す（既定）。将来 `*-GGUF` リポジトリ公開後は `-Model <repo>-GGUF:<quant>`（`-hf`）で直 DL に切替可。
+- **差し替えは1ノブ**：同系統は同 I/O 契約のため、サイズ変更は `start.ps1 -Model`（と監査ラベル
+  `inference.model`）のみ。コード/`inference.profile` は不変。
+- **`<<<DATA>>>` 不活性データラッパの省略を既定化**。`d3c8ad1` では opt-in だったが、抽出モデルを既定に
+  するため本省略も既定の挙動になる（学習分布一致のため。CLAUDE.md 不変条件「検査テキストは不活性データ」を
+  本プロファイル限定で弱める。ユーザー承認済み）。
+
+### Consequences
+
+- 利点：日本語社外秘の抽出精度を学習分布通りに引き出せる。系統内サイズ変更がコード変更不要。
+- リスク（カバレッジ変化）：11カテゴリ外・英語前提の秘密（汎用 API キー/パスワード等）は抽出モデルが
+  拾わない可能性。→ **`dlp.rule_guardrail.enabled: true` を維持**して決定論層で担保することを前提とする。
+- リスク（注入耐性低下）：ラッパ省略で命令注入に弱くなるが、抽出器に反転し得る判定フィールドが無く最悪でも
+  FN。rule guardrail + fail-closed が後段で補う。
+- プロンプト厳密性：モデルカードがスタブで実学習プロンプト非公開。`-sft` 系統由来の byte-exact プロンプトを
+  流用し、ずれる場合は `inference.system_prompt_file` で固定（`docs/todo.md` 参照）。
+
+### Related Records
+- docs/records/20260607/1224-switch-conf-extract-model.md
+
 ## AMD APU 推論バックエンド = llama.cpp Vulkan(iGPU)、CPU フォールバック (20260606 19:31)
 
 ### Status
